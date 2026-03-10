@@ -4,6 +4,16 @@ Fake Telegram API server for testing bots — pytest plugin + Claude Code MCP se
 
 Works with any bot framework (aiogram, python-telegram-bot, Telegraf, go-telegram-bot-api, etc.).
 
+**TL;DR** — install the plugin, add 4 lines to your bot, and ask Claude to test it:
+
+```bash
+/plugin install github:azdaev/tgmock
+```
+
+Claude will guide you through the rest with `/tgmock:setup` and `/tgmock:test`.
+
+---
+
 ## Installation
 
 ### Claude Code plugin (recommended)
