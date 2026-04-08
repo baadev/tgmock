@@ -112,13 +112,10 @@ if (!base) {
 }
 
 async function api(method, data) {
-  const body = new URLSearchParams();
-  for (const [key, value] of Object.entries(data)) {
-    body.set(key, String(value));
-  }
   const response = await fetch(`${base}/bot${token}/${method}`, {
     method: "POST",
-    body,
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(data),
   });
   return await response.json();
 }
@@ -133,12 +130,12 @@ async function main() {
         await api("sendMessage", {
           chat_id: update.message.chat.id,
           text: `echo: ${update.message.text || ""}`,
-          reply_markup: JSON.stringify({
+          reply_markup: {
             inline_keyboard: [[
               { text: "Button A", callback_data: "btn_a" },
               { text: "Button B", callback_data: "btn_b" },
             ]],
-          }),
+          },
         });
       } else if (update.callback_query) {
         await api("sendMessage", {

@@ -541,11 +541,29 @@ class TgmockSession:
 def snapshot_text(messages: list[dict[str, Any]]) -> str:
     if not messages:
         return "(no response)"
+    media_labels = {
+        "photo": "Photo",
+        "video": "Video",
+        "document": "Document",
+        "audio": "Audio",
+        "voice": "Voice",
+    }
     parts: list[str] = []
     for index, message in enumerate(messages):
         if index > 0:
             parts.append("---")
         text = message.get("text", "")
+        if not text:
+            caption = message.get("caption", "")
+            media_label = None
+            for key, label in media_labels.items():
+                if key in message:
+                    media_label = label
+                    break
+            if media_label:
+                text = f"[{media_label}] {caption}".strip()
+            elif caption:
+                text = caption
         if text:
             parts.append(f"[Bot] {text}")
         keyboard = message.get("reply_markup")

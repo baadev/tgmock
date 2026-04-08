@@ -63,6 +63,32 @@ TEST_USER = {
 }
 
 
+def _normalize_reply_markup(value):
+    if value in (None, ""):
+        return None
+    if isinstance(value, str):
+        return json.loads(value)
+    return value
+
+
+async def read_telegram_request(request: web.Request) -> dict:
+    if request.content_type == "application/json":
+        if request.content_length == 0:
+            data = {}
+        else:
+            data = await request.json()
+            if data is None:
+                data = {}
+            elif not isinstance(data, dict):
+                raise web.HTTPBadRequest(text="Telegram JSON request body must be an object")
+    else:
+        data = dict((await request.post()).items())
+
+    if "reply_markup" in data:
+        data["reply_markup"] = _normalize_reply_markup(data.get("reply_markup"))
+    return data
+
+
 class TelegramMockServer:
     def __init__(self, token: str, port: int = 8999):
         self.token = token
@@ -175,9 +201,15 @@ class TelegramMockServer:
     # ── Telegram API: getUpdates (long-poll) ──────────────────────────────────
 
     async def handle_get_updates(self, request: web.Request) -> web.Response:
-        data = await request.post()
-        offset = int(data.get("offset") or request.rel_url.query.get("offset", 0))
-        timeout = int(data.get("timeout") or request.rel_url.query.get("timeout", 0))
+        data = await read_telegram_request(request)
+        raw_offset = data.get("offset")
+        if raw_offset in (None, ""):
+            raw_offset = request.rel_url.query.get("offset", 0)
+        raw_timeout = data.get("timeout")
+        if raw_timeout in (None, ""):
+            raw_timeout = request.rel_url.query.get("timeout", 0)
+        offset = int(raw_offset or 0)
+        timeout = int(raw_timeout or 0)
         deadline = asyncio.get_event_loop().time() + min(timeout, 2)
 
         while True:
@@ -201,16 +233,15 @@ class TelegramMockServer:
     # ── Telegram API: sendMessage ─────────────────────────────────────────────
 
     async def handle_send_message(self, request: web.Request) -> web.Response:
-        data = await request.post()
+        data = await read_telegram_request(request)
         mid = self._next_msg_id()
         chat_id = int(data.get("chat_id", 0))
-        raw_markup = data.get("reply_markup")
         record = {
             "method": "sendMessage",
             "chat_id": chat_id,
             "text": data.get("text", ""),
             "parse_mode": data.get("parse_mode"),
-            "reply_markup": json.loads(raw_markup) if raw_markup else None,
+            "reply_markup": data.get("reply_markup"),
             "message_id": mid,
         }
         self._record_response(chat_id, record)
@@ -223,17 +254,16 @@ class TelegramMockServer:
     # ── Telegram API: editMessageText ─────────────────────────────────────────
 
     async def handle_edit_message_text(self, request: web.Request) -> web.Response:
-        data = await request.post()
+        data = await read_telegram_request(request)
         chat_id = int(data.get("chat_id", 0))
         msg_id = int(data.get("message_id", 0))
-        raw_markup = data.get("reply_markup")
         record = {
             "method": "editMessageText",
             "chat_id": chat_id,
             "message_id": msg_id,
             "text": data.get("text", ""),
             "parse_mode": data.get("parse_mode"),
-            "reply_markup": json.loads(raw_markup) if raw_markup else None,
+            "reply_markup": data.get("reply_markup"),
         }
         self._record_response(chat_id, record)
         log.info(f"[BOT→EDIT] {record['text'][:120]}")
@@ -263,27 +293,26 @@ class TelegramMockServer:
     # ── Telegram API: no-ops ──────────────────────────────────────────────────
 
     async def handle_answer_callback_query(self, request: web.Request) -> web.Response:
-        await request.post()
+        await read_telegram_request(request)
         return web.json_response({"ok": True, "result": True})
 
     async def handle_send_chat_action(self, request: web.Request) -> web.Response:
-        await request.post()
+        await read_telegram_request(request)
         return web.json_response({"ok": True, "result": True})
 
     async def handle_delete_message(self, request: web.Request) -> web.Response:
-        await request.post()
+        await read_telegram_request(request)
         return web.json_response({"ok": True, "result": True})
 
     async def handle_edit_message_reply_markup(self, request: web.Request) -> web.Response:
-        data = await request.post()
+        data = await read_telegram_request(request)
         chat_id = int(data.get("chat_id", 0))
         msg_id = int(data.get("message_id", 0))
-        raw_markup = data.get("reply_markup")
-        self._responses.setdefault(chat_id, []).append({
+        self._record_response(chat_id, {
             "method": "editMessageReplyMarkup",
             "chat_id": chat_id,
             "message_id": msg_id,
-            "reply_markup": json.loads(raw_markup) if raw_markup else None,
+            "reply_markup": data.get("reply_markup"),
         })
         return web.json_response({
             "ok": True,
@@ -299,7 +328,7 @@ class TelegramMockServer:
 
     async def _handle_send_media(self, request: web.Request, method: str, media_key: str) -> web.Response:
         """Generic handler for sendPhoto, sendDocument, sendVoice, etc."""
-        data = await request.post()
+        data = await read_telegram_request(request)
         chat_id = int(data.get("chat_id", 0))
         mid = self._next_msg_id()
         record = {
@@ -336,18 +365,18 @@ class TelegramMockServer:
         return await self._handle_send_media(request, "sendVideo", "video")
 
     async def handle_forward_message(self, request: web.Request) -> web.Response:
-        data = await request.post()
+        data = await read_telegram_request(request)
         chat_id = int(data.get("chat_id", 0))
         mid = self._next_msg_id()
         return web.json_response({"ok": True, "result": self._fake_message("", chat_id, mid)})
 
     async def handle_copy_message(self, request: web.Request) -> web.Response:
-        data = await request.post()
+        data = await read_telegram_request(request)
         mid = self._next_msg_id()
         return web.json_response({"ok": True, "result": {"message_id": mid}})
 
     async def handle_send_location(self, request: web.Request) -> web.Response:
-        data = await request.post()
+        data = await read_telegram_request(request)
         chat_id = int(data.get("chat_id", 0))
         mid = self._next_msg_id()
         return web.json_response({
@@ -361,13 +390,13 @@ class TelegramMockServer:
         })
 
     async def handle_send_contact(self, request: web.Request) -> web.Response:
-        data = await request.post()
+        data = await read_telegram_request(request)
         chat_id = int(data.get("chat_id", 0))
         mid = self._next_msg_id()
         return web.json_response({"ok": True, "result": self._fake_message("", chat_id, mid)})
 
     async def handle_send_poll(self, request: web.Request) -> web.Response:
-        data = await request.post()
+        data = await read_telegram_request(request)
         chat_id = int(data.get("chat_id", 0))
         mid = self._next_msg_id()
         return web.json_response({
@@ -381,11 +410,11 @@ class TelegramMockServer:
         })
 
     async def handle_stop_poll(self, request: web.Request) -> web.Response:
-        await request.post()
+        await read_telegram_request(request)
         return web.json_response({"ok": True, "result": {"id": "0", "question": "", "options": [], "is_closed": True}})
 
     async def handle_send_dice(self, request: web.Request) -> web.Response:
-        data = await request.post()
+        data = await read_telegram_request(request)
         chat_id = int(data.get("chat_id", 0))
         mid = self._next_msg_id()
         return web.json_response({
@@ -399,7 +428,7 @@ class TelegramMockServer:
         })
 
     async def _noop(self, request: web.Request) -> web.Response:
-        await request.post()
+        await read_telegram_request(request)
         return web.json_response({"ok": True, "result": True})
 
     # ── Test control: inject a user message ───────────────────────────────────

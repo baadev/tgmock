@@ -7,7 +7,7 @@ import pytest
 
 from tgmock._commands import is_python_command, normalize_command
 from tgmock._discovery import discover_project
-from tgmock.runtime import TgmockSession
+from tgmock.runtime import TgmockSession, snapshot_text
 
 from tests.helpers import (
     write_echo_bot_project,
@@ -107,8 +107,26 @@ async def test_session_start_auto_detects_node_project(tmp_path):
         response = await session.send("hello")
         assert response["ok"] is True
         assert "echo: hello" in response["snapshot"]
+        assert len(response["messages"]) == 1
+        assert response["messages"][0]["text"] == "echo: hello"
+
+        tapped = await session.tap("Button A")
+        assert tapped["ok"] is True
+        assert "tap: btn_a" in tapped["snapshot"]
+        assert "echo: hello" not in tapped["snapshot"]
+        assert len(tapped["messages"]) == 1
+        assert tapped["messages"][0]["text"] == "tap: btn_a"
     finally:
         await session.stop()
+
+
+def test_snapshot_text_renders_media_messages():
+    snapshot = snapshot_text([
+        {"method": "sendPhoto", "caption": "look", "photo": {"file_id": "p1"}},
+        {"method": "sendVideo", "video": {"file_id": "v1"}},
+    ])
+    assert "[Bot] [Photo] look" in snapshot
+    assert "[Bot] [Video]" in snapshot
 
 
 @pytest.mark.skipif(shutil.which("go") is None, reason="go is not installed")
