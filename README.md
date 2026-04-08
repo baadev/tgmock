@@ -2,110 +2,116 @@
 
 # tgmock
 
-### Тестируйте Telegram-бота локально без реального Telegram API
+### Test Telegram bots locally without hitting the real Telegram API
+
+<p>
+  <a href="./README.md"><strong>English</strong></a> · <a href="./README.ru.md">Русский</a>
+</p>
 
 <p>
   <img alt="Python" src="https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white">
   <img alt="Version" src="https://img.shields.io/badge/version-0.2.0-7B61FF">
   <img alt="Pytest plugin" src="https://img.shields.io/badge/pytest-plugin-0A9EDC?logo=pytest&logoColor=white">
   <img alt="MCP" src="https://img.shields.io/badge/Codex-MCP%20tools-111827">
+  <img alt="License" src="https://img.shields.io/badge/license-MIT-22C55E">
 </p>
 
 </div>
 
-> **`tgmock`** — это локальный fake Telegram Bot API + runtime для запуска бота + MCP-инструменты для Codex + pytest-плагин.
+> **`tgmock`** is a local fake Telegram Bot API + bot runtime session manager + Codex MCP tool server + pytest plugin.
 
 ---
 
-## Почему это полезно
+## Why tgmock
 
-Когда бот общается с реальным Telegram API, тесты становятся хрупкими и медленными. `tgmock` поднимает локальный HTTP-сервер, который имитирует Bot API, и позволяет:
+When your bot talks to the real Telegram API, tests are often slow and brittle.
+`tgmock` starts a local HTTP mock of the Bot API so you can:
 
-- отправлять боту сообщения и фото,
-- нажимать inline-кнопки,
-- читать ответы и логи,
-- собирать кастомные события,
-- запускать всё это из Codex (через MCP) или из `pytest`.
+- send text and photo updates,
+- press inline buttons,
+- inspect bot responses and logs,
+- collect custom events,
+- run the same flow via Codex MCP tools or `pytest`.
 
-## Что внутри
+## What’s included
 
 - **Fake Telegram API server** (`TelegramMockServer`).
-- **Session runtime** (`TgmockSession`), который поднимает сервер + процесс вашего бота.
-- **MCP server** с инструментами `tg_start`, `tg_send`, `tg_tap`, `tg_snapshot`, `tg_logs`, `tg_stop` и др.
-- **Pytest plugin** с фикстурами `tg_runtime`, `tg_server`, `tg_bot`, `tg_client`, `tg_client_factory`.
+- **Session runtime** (`TgmockSession`) that runs the mock server + your bot subprocess.
+- **MCP server** with tools like `tg_start`, `tg_send`, `tg_tap`, `tg_snapshot`, `tg_logs`, `tg_stop`.
+- **Pytest plugin** with fixtures: `tg_runtime`, `tg_server`, `tg_bot`, `tg_client`, `tg_client_factory`.
 - **CLI**:
-  - `tgmock serve` — поднять только mock-сервер,
-  - `tgmock mcp` — поднять MCP-сервер.
+  - `tgmock serve` — run the mock server only,
+  - `tgmock mcp` — run the MCP server.
 
-## Поддерживаемые сценарии запуска бота
+## Auto-detection support
 
-`tgmock` умеет авто-детектить команды запуска для:
+`tgmock` can auto-detect bot startup commands for:
 
-- **Python** (например `bot.py`, `main.py`, `package.__main__`),
-- **Node.js** (`package.json` scripts `start`/`dev`, `main`, популярные entrypoint-файлы),
-- **Go** (`main.go`, `cmd/*/main.go`, с build-шагом перед стартом).
+- **Python** (e.g. `bot.py`, `main.py`, package `__main__`),
+- **Node.js** (`package.json` scripts `start`/`dev`, `main`, common entry files),
+- **Go** (`main.go`, `cmd/*/main.go`, with pre-start build command).
 
-Если авто-детект не подходит, команду можно задать вручную.
+If detection is wrong, set the command explicitly.
 
 ---
 
-## Быстрый старт
+## Quick start
 
-### 1) Установка
+### 1) Install
 
 ```bash
 pip install "tgmock[mcp]"
 ```
 
-### 2) Подключить к Codex
+### 2) Connect to Codex
 
-**Вариант A (рекомендуется):** зарегистрировать локальный плагин из этого репозитория.
+**Option A (recommended):** register this repository as a local Codex plugin.
 
 ```bash
 python3 scripts/register_codex_plugin.py
 ```
 
-**Вариант B:** добавить MCP вручную.
+**Option B:** register MCP manually.
 
 ```bash
 codex mcp add tgmock -- python3 -m tgmock.mcp_server
 ```
 
-### 3) Запуск тестовой сессии в Codex
+### 3) Run a test session in Codex
 
-Минимальный flow:
+Minimal flow:
 
 1. `tg_start(project_root="/path/to/your-bot")`
 2. `tg_send(text="/start")`
 3. `tg_snapshot()` / `tg_logs()`
 4. `tg_stop()`
 
-> `project_root` должен указывать на **репозиторий бота**, а не на этот репозиторий.
+> `project_root` must point to your **bot repository**, not this `tgmock` repository.
 
 ---
 
-## Как это работает (кратко)
+## How it works (short version)
 
-1. `tgmock` читает конфиг.
-2. Поднимает локальный mock Telegram API (`http://localhost:<port>`).
-3. Запускает ваш бот как subprocess.
-4. Ждёт готовности:
-   - либо по `ready_log`,
-   - либо по первому запросу бота в mock API.
-5. Через MCP/pytest вы инжектируете апдейты и проверяете ответы.
+1. `tgmock` loads config.
+2. Starts local mock Telegram API (`http://localhost:<port>`).
+3. Starts your bot as a subprocess.
+4. Waits until ready:
+   - by `ready_log`, or
+   - by first bot request to mock API.
+5. MCP/pytest inject updates and assert outputs.
 
 ---
 
-## Конфигурация
+## Configuration
 
-Приоритет источников (сверху вниз):
+Configuration priority (highest to lowest):
 
-1. `TGMOCK_*` переменные окружения,
-2. `TGMOCK_*` из `.env`,
-3. `[tool.tgmock]` в `pyproject.toml`,
-4. значения по умолчанию.
+1. `TGMOCK_*` environment variables,
+2. `TGMOCK_*` keys from `.env`,
+3. `[tool.tgmock]` in `pyproject.toml`,
+4. built-in defaults.
 
-Пример в `pyproject.toml`:
+Example:
 
 ```toml
 [tool.tgmock]
@@ -124,13 +130,13 @@ codex mcp add tgmock -- python3 -m tgmock.mcp_server
 # DATABASE_URL = "postgres://..."
 ```
 
-### Важно про Python auto-patch
+### Python auto-patch
 
-Для Python-команд `tgmock` может автоматически пропатчить сетевые вызовы, чтобы трафик к Telegram API ушёл в локальный mock-сервер. Обычно это позволяет стартовать без изменения кода бота.
+For Python commands, `tgmock` can auto-patch HTTP clients so Telegram API calls are redirected to the local mock server. In many projects this works without bot code changes.
 
 ---
 
-## Пример с pytest
+## pytest example
 
 ```python
 import pytest
@@ -141,7 +147,7 @@ async def test_start_flow(tg_client):
     assert "start" in resp.text.lower()
 ```
 
-Полезные методы клиента:
+Useful client methods:
 
 - `send(text)`
 - `send_photo(...)`
@@ -152,48 +158,48 @@ async def test_start_flow(tg_client):
 
 ---
 
-## MCP инструменты (основные)
+## Core MCP tools
 
-- `tg_start` — старт mock-сервера и бота,
-- `tg_send` / `tg_send_photo` — отправка апдейтов,
-- `tg_tap` — нажатие inline-кнопки,
-- `tg_snapshot` — текущий снапшот диалога,
-- `tg_events` — кастомные события,
-- `tg_logs` — хвост логов,
-- `tg_restart` — рестарт процесса бота,
-- `tg_stop` — остановка сессии.
+- `tg_start` — start mock server + bot process,
+- `tg_send` / `tg_send_photo` — inject updates,
+- `tg_tap` — click inline keyboard buttons,
+- `tg_snapshot` — conversation snapshot,
+- `tg_events` — custom emitted events,
+- `tg_logs` — bot log tail,
+- `tg_restart` — restart bot process,
+- `tg_stop` — stop current session.
 
 ---
 
 ## CLI
 
 ```bash
-# поднять только mock API сервер
+# run only mock Telegram Bot API
 tgmock serve --port 8999 --token test:token
 
-# поднять MCP сервер
+# run MCP server
 tgmock mcp
 ```
 
 ---
 
-## Ограничения и советы
+## Troubleshooting
 
-- Если бот не стартует, сначала смотрите `tg_logs`.
-- Для Node/Go-проектов убедитесь, что бот может работать с кастомным `BOT_API_BASE`.
-- Если авто-детект команды не сработал, задайте `TGMOCK_BOT_COMMAND` или `[tool.tgmock].bot_command` явно.
-
----
-
-## Структура репозитория
-
-- `tgmock/` — runtime, сервер, MCP, pytest plugin, клиент.
-- `scripts/register_codex_plugin.py` — регистрация локального Codex-плагина.
-- `skills/` — skill-файлы для Codex.
-- `tests/` — тесты проекта.
+- If the bot fails to start, check `tg_logs` first.
+- For Node/Go bots, ensure your bot supports custom `BOT_API_BASE`.
+- If auto-detection fails, set `TGMOCK_BOT_COMMAND` or `[tool.tgmock].bot_command` explicitly.
 
 ---
 
-## Лицензия
+## Repository layout
 
-Добавьте секцию лицензии при публикации (например, MIT), если планируете открытый релиз.
+- `tgmock/` — runtime, server, MCP, pytest plugin, client.
+- `scripts/register_codex_plugin.py` — local Codex plugin registration.
+- `skills/` — Codex skill files.
+- `tests/` — project test suite.
+
+---
+
+## License
+
+MIT.
