@@ -9,8 +9,8 @@ You are testing a Telegram bot through `tgmock` MCP tools inside Codex.
 
 1. Inspect the target project first.
    - Confirm the project root.
-   - Confirm how the bot is started.
-   - Confirm the likely readiness log if startup is not already configured.
+   - Confirm how the bot is started if auto-detection might be ambiguous.
+   - Confirm whether the bot already uses `BOT_API_BASE` when the runtime is not Python.
 
 2. Start explicitly with `project_root`.
    - Use `tg_start(project_root=...)` unless you are certain the MCP server already runs from the correct root.

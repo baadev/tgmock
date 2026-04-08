@@ -9,11 +9,11 @@ from tgmock._commands import Command
 
 @dataclass
 class TgmockConfig:
-    bot_command: Command = "python main.py"
+    bot_command: Command | None = None
     port: int = 8999
     token: str = "test:token"
     settle_ms: int = 400
-    ready_log: str = "bot starting"
+    ready_log: str | None = None
     startup_timeout: float = 15.0
     default_timeout: float = 25.0
     env_file: str = ".env"

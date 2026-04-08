@@ -1,13 +1,20 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
 
 from tgmock._commands import is_python_command, normalize_command
+from tgmock._discovery import discover_project
 from tgmock.runtime import TgmockSession
 
-from tests.helpers import write_echo_bot_project
+from tests.helpers import (
+    write_echo_bot_project,
+    write_echo_bot_project_without_config,
+    write_go_echo_bot_project,
+    write_node_echo_bot_project,
+)
 
 
 def test_normalize_command_handles_quotes():
@@ -69,3 +76,45 @@ async def test_session_restart_keeps_server_running(tmp_path):
         assert "echo: after restart" in second["snapshot"]
     finally:
         await session.stop()
+
+
+@pytest.mark.asyncio
+async def test_session_start_auto_detects_python_project(tmp_path):
+    project_root = write_echo_bot_project_without_config(tmp_path)
+    session = TgmockSession()
+    try:
+        result = await session.start(project_root=project_root)
+        assert result["ok"] is True
+        assert "bot.py" in result["bot_command"]
+
+        response = await session.send("hello")
+        assert response["ok"] is True
+        assert "echo: hello" in response["snapshot"]
+    finally:
+        await session.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(shutil.which("npm") is None, reason="npm is not installed")
+async def test_session_start_auto_detects_node_project(tmp_path):
+    project_root = write_node_echo_bot_project(tmp_path)
+    session = TgmockSession()
+    try:
+        result = await session.start(project_root=project_root)
+        assert result["ok"] is True
+        assert result["bot_command"] == "npm run start"
+
+        response = await session.send("hello")
+        assert response["ok"] is True
+        assert "echo: hello" in response["snapshot"]
+    finally:
+        await session.stop()
+
+
+@pytest.mark.skipif(shutil.which("go") is None, reason="go is not installed")
+def test_discover_project_auto_detects_go_build_and_binary(tmp_path):
+    project_root = write_go_echo_bot_project(tmp_path)
+    result = discover_project(project_root)
+    assert result.runtime == "go"
+    assert result.bot_command == ["./.tgmock-go-bot"]
+    assert result.build_command == ["go", "build", "-ldflags=-linkmode external", "-o", ".tgmock-go-bot", "."]

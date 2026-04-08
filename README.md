@@ -57,8 +57,7 @@ This is the repository of the Telegram bot you want to test.
 
 In the bot project you usually do things like:
 
-- add `TGMOCK_BOT_COMMAND`
-- add `TGMOCK_READY_LOG`
+- let `tgmock` auto-detect how to start the bot
 - optionally wire `BOT_API_BASE` if auto-patch is not enough
 - ask Codex to start tests with `project_root` pointing to that bot project
 
@@ -75,7 +74,19 @@ pip install "tgmock[mcp]"
 
 ### 2. In the `tgmock` repository: connect tgmock to Codex
 
-Manual MCP registration:
+Preferred: register this checkout as a local Codex plugin:
+
+```bash
+python3 scripts/register_codex_plugin.py
+```
+
+This script is idempotent. It:
+
+- creates or updates `~/plugins/tgmock` as a symlink to this checkout
+- creates or updates `~/.agents/plugins/marketplace.json`
+- preserves any other existing local plugin entries
+
+Fallback: manual MCP registration:
 
 ```bash
 codex mcp add tgmock -- python3 -m tgmock.mcp_server
@@ -87,29 +98,32 @@ This repository also already contains a local Codex plugin manifest:
 - `.mcp.json`
 - `skills/`
 
-### 3. In the bot project: add minimal config
+### 3. In the bot project: usually no tgmock config is needed
 
 Now switch to the repository of the bot you want to test.
 
-Create or update `.env` in the bot project:
+In common projects `tgmock` can now auto-detect the start command:
+
+- Python: common entrypoints like `bot.py`, `main.py`, and package `__main__.py`
+- Node: `package.json` scripts like `start` or `dev`, plus common `bot.js` style files
+- Go: `go.mod` projects with `main.go` or `cmd/*/main.go`
+
+Readiness is also inferred automatically from the first request your bot makes to the mock Telegram API, so `TGMOCK_READY_LOG` is usually unnecessary.
+
+Only add explicit config when auto-detection is wrong or your project needs a custom command:
 
 ```env
 TGMOCK_BOT_COMMAND=python main.py
 TGMOCK_READY_LOG=Bot starting
 ```
 
-You only need:
-
-- `TGMOCK_BOT_COMMAND`: how to start the bot
-- `TGMOCK_READY_LOG`: a line from bot logs that means "the bot is ready"
-
-If your bot prints something else on startup, use that text instead of `Bot starting`.
+`TGMOCK_READY_LOG` is now an override, not a required setup step.
 
 ### 4. In Codex: ask it to test the bot project
 
 Typical flow:
 
-1. Ask Codex to inspect the bot project and confirm the entrypoint plus ready log.
+1. Ask Codex to inspect the bot project and confirm the detected entrypoint.
 2. Ask it to call `tg_start(project_root="...")`.
 3. Ask it to send `/start` and check the response.
 4. Ask it to stop the session with `tg_stop()`.
@@ -128,8 +142,8 @@ Important: `project_root` here is the path to the **bot project**, not the path 
 
 First check:
 
-- is `TGMOCK_BOT_COMMAND` correct?
-- does `TGMOCK_READY_LOG` match the real startup log?
+- did `tgmock` detect the right start command?
+- if the project is Node or Go, does the bot read `BOT_API_BASE`?
 - does the bot actually start if you run the command manually?
 
 Then use:
@@ -140,12 +154,12 @@ Then use:
 ### Minimal mental model
 
 - `tgmock` repository: install the tool and expose its MCP server to Codex
-- bot repository: tell `tgmock` how to start the bot
+- bot repository: usually let `tgmock` detect how to start the bot
 - Codex session: run `tg_start(project_root="path-to-bot-repo")` and test the flow
 
 ## For most Python bots
 
-If the bot uses `aiohttp` or `httpx`, `tgmock` usually works without changing bot code. Start with the minimal config above first. Only read the manual wiring section later if auto-patch is not enough.
+If the bot uses `aiohttp` or `httpx`, `tgmock` usually works without changing bot code. Start with zero config first. Only read the manual wiring section later if auto-patch is not enough.
 
 ## Repository layout
 
@@ -172,7 +186,45 @@ This repository already contains the files a local Codex plugin needs:
 - `.mcp.json`
 - `skills/`
 
-Use the repository as a local plugin in Codex, or connect the MCP server manually.
+To register this checkout for yourself:
+
+```bash
+python3 scripts/register_codex_plugin.py
+```
+
+Run it from the `tgmock` repository checkout. The script will:
+
+- create or update `~/plugins/tgmock` as a symlink to your checkout
+- create or update `~/.agents/plugins/marketplace.json`
+- upsert the `tgmock` marketplace entry without removing other plugins
+
+If `tgmock` does not appear immediately in Codex after registration, restart Codex and reload the local plugin list.
+
+If you prefer to wire it manually, create the symlink yourself:
+
+```bash
+mkdir -p ~/plugins
+ln -sfn /absolute/path/to/tgmock ~/plugins/tgmock
+```
+
+Then add this entry to `~/.agents/plugins/marketplace.json`:
+
+```json
+{
+  "name": "tgmock",
+  "source": {
+    "source": "local",
+    "path": "./plugins/tgmock"
+  },
+  "policy": {
+    "installation": "AVAILABLE",
+    "authentication": "ON_INSTALL"
+  },
+  "category": "Developer Tools"
+}
+```
+
+If the marketplace file does not exist yet, create it with a `plugins` array and include the entry above.
 
 ### Fallback: manual MCP registration
 
@@ -194,7 +246,7 @@ For Python bots, `tgmock` can auto-patch `aiohttp` and `httpx` so the bot is red
 
 ## Project configuration
 
-Configure the target bot in `.env` or `pyproject.toml`.
+Configuration is optional. Start with zero config and add overrides only if auto-detection is wrong or the project needs custom build/start behavior.
 
 ### `.env`
 
@@ -241,7 +293,7 @@ Config priority stays the same:
 1. `TGMOCK_*` process environment variables
 2. `TGMOCK_*` values from the project `.env`
 3. `[tool.tgmock]` in `pyproject.toml`
-4. built-in defaults
+4. auto-detected project defaults
 
 ## Auto-patch vs manual wiring
 
@@ -262,7 +314,7 @@ TGMOCK_AUTO_PATCH=false
 
 ### Manual wiring
 
-For non-Python bots, or when auto-patch is disabled, wire `BOT_API_BASE` into the bot yourself.
+For non-Python bots, or when auto-patch is disabled, wire `BOT_API_BASE` into the bot yourself. This is the main extra step for Node and Go bots: start command detection is automatic, API redirection is not.
 
 **aiogram 3.x**
 
@@ -321,7 +373,8 @@ The MCP server exposes these tools:
 
 ## Typical Codex flow
 
-1. Inspect the target project and confirm the bot entrypoint plus ready log.
+1. Inspect the target project and confirm the bot entrypoint if auto-detection might be ambiguous.
+   If config is absent, `tgmock` will auto-detect the entrypoint and wait for the first bot request to the mock API.
 2. Call `tg_start(project_root=...)`.
 3. Exercise the bot with `tg_send`, `tg_tap`, `tg_snapshot`, `tg_events`, and `tg_logs`.
 4. Call `tg_stop()` when done.

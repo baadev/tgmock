@@ -10,8 +10,9 @@ from pathlib import Path
 from typing import Any
 
 from tgmock._autopatch import is_python_command, prepare_autopatch
-from tgmock._commands import Command, command_preview, normalize_command, prepend_pythonpath
+from tgmock._commands import Command, command_preview, detect_command_runtime, normalize_command, prepend_pythonpath
 from tgmock._config import TgmockConfig, load_config
+from tgmock._discovery import discover_project
 from tgmock.server import TelegramMockServer
 
 
@@ -29,6 +30,7 @@ class TgmockSession:
         self.bot_logs: collections.deque[str] = collections.deque(maxlen=200)
         self.log_reader_task: asyncio.Task | None = None
         self.autopatch_tmpdir: str | None = None
+        self._ready_log_event: asyncio.Event | None = None
 
     async def start(
         self,
@@ -56,16 +58,38 @@ class TgmockSession:
             cfg.ready_log = ready_log
         if startup_timeout is not None:
             cfg.startup_timeout = startup_timeout
+        discovery = discover_project(root)
+        bot_command_missing = cfg.bot_command is None
+        ready_log_missing = cfg.ready_log is None
+        using_discovered_bot_command = False
+        if cfg.bot_command is None:
+            cfg.bot_command = discovery.bot_command
+            using_discovered_bot_command = True
+        if cfg.build_command is None and using_discovered_bot_command:
+            cfg.build_command = discovery.build_command
 
         bot_argv = normalize_command(cfg.bot_command)
         if not bot_argv:
-            raise ValueError("tgmock requires bot_command to be configured")
+            raise ValueError(
+                f"tgmock could not auto-detect how to start the bot in {root}. "
+                "Set TGMOCK_BOT_COMMAND or [tool.tgmock].bot_command."
+            )
         build_argv = normalize_command(cfg.build_command)
 
         self.project_root = root
         self.config = cfg
         self.base_url = f"http://localhost:{cfg.port}"
         self.bot_logs.clear()
+        if bot_command_missing and discovery.reason:
+            self._store_log(f"[tgmock] auto-detected bot command: {command_preview(cfg.bot_command)} ({discovery.reason})")
+        elif cfg.bot_command is not None:
+            self._store_log(f"[tgmock] bot command: {command_preview(cfg.bot_command)}")
+        if cfg.build_command is not None:
+            self._store_log(f"[tgmock] build command: {command_preview(cfg.build_command)}")
+        if ready_log_missing:
+            self._store_log("[tgmock] readiness: waiting for first bot request to tgmock")
+        elif cfg.ready_log:
+            self._store_log(f"[tgmock] readiness log: {cfg.ready_log}")
 
         bot_env = self._build_bot_env(root, cfg, env)
 
@@ -80,6 +104,7 @@ class TgmockSession:
         self.mock_server = TelegramMockServer(token=cfg.token, port=cfg.port)
         self.server_runner = await self.mock_server.start()
 
+        activity_since = asyncio.get_event_loop().time()
         self.bot_proc = subprocess.Popen(
             bot_argv,
             cwd=str(root),
@@ -89,11 +114,12 @@ class TgmockSession:
             text=True,
             bufsize=1,
         )
+        await self._start_log_reader(self.bot_proc, cfg.ready_log)
 
         t0 = asyncio.get_event_loop().time()
         try:
             await asyncio.wait_for(
-                self._wait_ready(self.bot_proc, cfg.ready_log, cfg.startup_timeout),
+                self._wait_ready(self.bot_proc, cfg.ready_log, cfg.startup_timeout, activity_since),
                 timeout=cfg.startup_timeout,
             )
         except Exception as exc:
@@ -101,7 +127,6 @@ class TgmockSession:
             await self.stop()
             raise RuntimeError(f"Bot failed to start: {exc}\n\nLast bot output:\n{last_logs}") from exc
 
-        await self._start_log_reader(self.bot_proc)
         elapsed = asyncio.get_event_loop().time() - t0
         return {
             "ok": True,
@@ -109,6 +134,7 @@ class TgmockSession:
             "port": cfg.port,
             "base_url": self.base_url,
             "project_root": str(root),
+            "bot_command": command_preview(cfg.bot_command),
             "message": f"Bot ready after {elapsed:.1f}s",
         }
 
@@ -149,6 +175,13 @@ class TgmockSession:
             cfg.startup_timeout = startup_timeout
         elif same_root:
             cfg.startup_timeout = self.config.startup_timeout
+        discovery = discover_project(root)
+        using_discovered_bot_command = False
+        if cfg.bot_command is None:
+            cfg.bot_command = discovery.bot_command
+            using_discovered_bot_command = True
+        if cfg.build_command is None and using_discovered_bot_command:
+            cfg.build_command = discovery.build_command
 
         await self._stop_bot()
 
@@ -161,11 +194,22 @@ class TgmockSession:
 
         bot_argv = normalize_command(cfg.bot_command)
         if not bot_argv:
-            raise ValueError("tgmock requires bot_command to be configured")
+            raise ValueError(
+                f"tgmock could not auto-detect how to restart the bot in {root}. "
+                "Set TGMOCK_BOT_COMMAND or [tool.tgmock].bot_command."
+            )
 
         self.project_root = root
         self.config = cfg
         self.bot_logs.clear()
+        self._store_log(f"[tgmock] bot command: {command_preview(cfg.bot_command)}")
+        if cfg.build_command is not None:
+            self._store_log(f"[tgmock] build command: {command_preview(cfg.build_command)}")
+        if cfg.ready_log:
+            self._store_log(f"[tgmock] readiness log: {cfg.ready_log}")
+        else:
+            self._store_log("[tgmock] readiness: waiting for first bot request to tgmock")
+        activity_since = asyncio.get_event_loop().time()
         self.bot_proc = subprocess.Popen(
             bot_argv,
             cwd=str(root),
@@ -175,9 +219,10 @@ class TgmockSession:
             text=True,
             bufsize=1,
         )
+        await self._start_log_reader(self.bot_proc, cfg.ready_log)
         try:
             await asyncio.wait_for(
-                self._wait_ready(self.bot_proc, cfg.ready_log, cfg.startup_timeout),
+                self._wait_ready(self.bot_proc, cfg.ready_log, cfg.startup_timeout, activity_since),
                 timeout=cfg.startup_timeout,
             )
         except Exception as exc:
@@ -185,7 +230,6 @@ class TgmockSession:
             await self._stop_bot()
             raise RuntimeError(f"Bot failed to restart: {exc}\n\nLast bot output:\n{last_logs}") from exc
 
-        await self._start_log_reader(self.bot_proc)
         return {"ok": True, "pid": self.bot_proc.pid, "message": "Bot restarted"}
 
     async def stop(self, timeout: float = 5.0) -> dict[str, Any]:
@@ -409,31 +453,50 @@ class TgmockSession:
         if completed.returncode != 0:
             raise RuntimeError(f"Build command failed (exit {completed.returncode}): {display}")
 
-    async def _wait_ready(self, proc: subprocess.Popen[str], ready_log: str, timeout: float) -> None:
+    async def _wait_ready(
+        self,
+        proc: subprocess.Popen[str],
+        ready_log: str | None,
+        timeout: float,
+        activity_since: float,
+    ) -> None:
+        if timeout <= 0:
+            raise RuntimeError("startup_timeout must be greater than zero")
         loop = asyncio.get_event_loop()
-        needle = ready_log.lower()
+        deadline = loop.time() + timeout
         while True:
-            line = await loop.run_in_executor(None, proc.stdout.readline)
-            if not line:
-                raise RuntimeError("Bot exited before ready")
-            self._store_log(line)
-            sys.stderr.write(f"[BOT] {line}")
-            if needle in line.lower():
+            if ready_log and self._ready_log_event and self._ready_log_event.is_set():
+                await asyncio.sleep(0.1)
+                if proc.poll() is not None:
+                    raise RuntimeError("Bot exited after emitting the readiness log")
+                return
+            activity_path = self.mock_server.get_bot_activity_since(activity_since) if self.mock_server else None
+            if activity_path:
+                self._store_log(f"[tgmock] bot reached mock API: {activity_path}")
+                await asyncio.sleep(0.1)
+                if proc.poll() is not None:
+                    raise RuntimeError("Bot exited after reaching the mock API")
                 return
             if proc.poll() is not None:
                 raise RuntimeError("Bot exited before ready")
-            if timeout <= 0:
-                raise RuntimeError("startup_timeout must be greater than zero")
+            if loop.time() >= deadline:
+                raise RuntimeError(self._readiness_timeout_message())
+            await asyncio.sleep(0.05)
 
-    async def _start_log_reader(self, proc: subprocess.Popen[str]) -> None:
+    async def _start_log_reader(self, proc: subprocess.Popen[str], ready_log: str | None) -> None:
+        self._ready_log_event = asyncio.Event()
+
         async def _drain() -> None:
             loop = asyncio.get_event_loop()
+            needle = ready_log.lower() if ready_log else None
             while proc.poll() is None:
                 line = await loop.run_in_executor(None, proc.stdout.readline)
                 if not line:
                     break
                 self._store_log(line)
                 sys.stderr.write(f"[BOT] {line}")
+                if needle and needle in line.lower():
+                    self._ready_log_event.set()
 
         if self.log_reader_task:
             self.log_reader_task.cancel()
@@ -445,6 +508,7 @@ class TgmockSession:
             self.log_reader_task.cancel()
             await asyncio.gather(self.log_reader_task, return_exceptions=True)
             self.log_reader_task = None
+        self._ready_log_event = None
 
         if self.bot_proc:
             self.bot_proc.terminate()
@@ -458,6 +522,20 @@ class TgmockSession:
 
     def _store_log(self, line: str) -> None:
         self.bot_logs.append(line.rstrip())
+
+    def _readiness_timeout_message(self) -> str:
+        runtime = detect_command_runtime(self.config.bot_command if self.config else None)
+        if runtime == "python":
+            return (
+                "Timed out waiting for readiness. The bot never reached tgmock. "
+                "If auto-patch does not apply, wire BOT_API_BASE manually."
+            )
+        if runtime in {"node", "go"}:
+            return (
+                "Timed out waiting for readiness. The bot never reached tgmock. "
+                "Node and Go bots usually need explicit BOT_API_BASE wiring."
+            )
+        return "Timed out waiting for readiness. The bot never reached tgmock."
 
 
 def snapshot_text(messages: list[dict[str, Any]]) -> str:

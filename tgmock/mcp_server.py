@@ -40,7 +40,7 @@ def tool_definitions() -> list[dict[str, Any]]:
                             {"type": "string"},
                             {"type": "array", "items": {"type": "string"}},
                         ],
-                        "description": "Command to start the bot. Strings are parsed with shlex, not a shell.",
+                        "description": "Optional command to start the bot. When omitted, tgmock auto-detects common Python, Node, and Go entrypoints. Strings are parsed with shlex, not a shell.",
                     },
                     "build_command": {
                         "oneOf": [
@@ -50,7 +50,7 @@ def tool_definitions() -> list[dict[str, Any]]:
                         "description": "Optional pre-start build command. Strings are parsed with shlex, not a shell.",
                     },
                     "port": {"type": "integer", "default": 8999},
-                    "ready_log": {"type": "string", "description": "Substring in bot stdout that signals readiness."},
+                    "ready_log": {"type": "string", "description": "Optional substring in bot stdout that signals readiness. If omitted, tgmock waits for the first bot request to the mock API."},
                     "env": {"type": "object", "description": "Extra environment variables merged on top of config."},
                     "startup_timeout": {"type": "number", "default": 15.0},
                 },

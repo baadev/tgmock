@@ -32,7 +32,7 @@ asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
 
 [tool.tgmock]
-# Override these in your project's pyproject.toml
+# Optional overrides for projects where auto-detection is not enough
 # bot_command = ["python", "main.py"]
 # port = 8999
 # token = "test:token"

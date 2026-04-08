@@ -28,25 +28,34 @@ def command_preview(command: Command | None) -> str:
     return shlex.join(argv) if argv else ""
 
 
-def is_python_command(command: Command | None) -> bool:
-    """Best-effort detection for Python entrypoints to enable auto-patch."""
+def detect_command_runtime(command: Command | None) -> str | None:
     argv = normalize_command(command)
     if not argv:
-        return False
+        return None
 
     names = [Path(arg).name for arg in argv]
     first = names[0]
     if first.startswith("python"):
-        return True
-
+        return "python"
+    if first == "node":
+        return "node"
+    if first == "go":
+        return "go"
+    if first in {"npm", "pnpm", "yarn"}:
+        return "node"
     if len(names) >= 3 and names[0] in {"uv", "poetry"} and names[1] == "run":
-        return names[2].startswith("python")
-
+        nested = detect_command_runtime(names[2:])
+        if nested:
+            return nested
     if first in {"bash", "sh", "zsh"} and len(argv) >= 3 and argv[1] in {"-c", "-lc"}:
         shell_words = shlex.split(argv[2])
-        return bool(shell_words and Path(shell_words[0]).name.startswith("python"))
+        return detect_command_runtime(shell_words)
+    return None
 
-    return False
+
+def is_python_command(command: Command | None) -> bool:
+    """Best-effort detection for Python entrypoints to enable auto-patch."""
+    return detect_command_runtime(command) == "python"
 
 
 def prepend_pythonpath(existing_env: dict[str, str], path: str) -> str:

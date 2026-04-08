@@ -84,6 +84,9 @@ class TelegramMockServer:
         self._messages: dict[tuple[int, int], dict] = {}
         # Optional reset hook: bot registers its callback URL here
         self._reset_url: str | None = None
+        self._bot_activity_event = asyncio.Event()
+        self._last_bot_activity_at = 0.0
+        self._last_bot_activity_path: str | None = None
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
@@ -126,6 +129,16 @@ class TelegramMockServer:
         mid = record.get("message_id")
         if mid is not None:
             self._messages[(chat_id, mid)] = record
+
+    def mark_bot_activity(self, path: str) -> None:
+        self._last_bot_activity_at = asyncio.get_event_loop().time()
+        self._last_bot_activity_path = path
+        self._bot_activity_event.set()
+
+    def get_bot_activity_since(self, since: float) -> str | None:
+        if self._last_bot_activity_at > since:
+            return self._last_bot_activity_path
+        return None
 
     async def reset_state(self, user_id: int | None = None, *, call_hook: bool = False) -> None:
         """Clear accumulated state for one user or all users."""
@@ -586,7 +599,13 @@ class TelegramMockServer:
     # ── server setup ──────────────────────────────────────────────────────────
 
     def build_app(self) -> web.Application:
-        app = web.Application()
+        @web.middleware
+        async def _track_bot_activity(request: web.Request, handler):
+            if request.path.startswith("/bot"):
+                self.mark_bot_activity(request.path)
+            return await handler(request)
+
+        app = web.Application(middlewares=[_track_bot_activity])
 
         # Telegram Bot API endpoints — {token} wildcard accepts any bot token
         app.router.add_post("/bot{token}/getUpdates", self.handle_get_updates)

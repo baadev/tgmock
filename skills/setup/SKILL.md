@@ -8,13 +8,13 @@ You are configuring `tgmock` for a Telegram bot project so Codex can test it thr
 ## Workflow
 
 1. Inspect the project first.
-   - Find the bot entrypoint.
-   - Find what the bot prints when it is actually ready.
+   - Find the bot entrypoint if auto-detection might be ambiguous.
    - Check whether the bot already supports `BOT_API_BASE`.
    - Check whether the runtime is Python with `aiohttp` or `httpx`, because that enables auto-patch.
 
 2. Configure tgmock in the target project.
-   - Prefer updating the project's `.env` or `pyproject.toml`.
+   - Prefer zero-config startup first.
+   - Only update the project's `.env` or `pyproject.toml` when auto-detection is wrong or the project needs a custom command.
    - Keep `project_root` explicit when later calling `tg_start`; do not assume the MCP server cwd matches the bot project.
 
 3. Verify with the MCP tools.
@@ -25,14 +25,14 @@ You are configuring `tgmock` for a Telegram bot project so Codex can test it thr
 
 ## Recommended configuration
 
-`.env`
+Optional `.env`
 
 ```env
 TGMOCK_BOT_COMMAND=python main.py
 TGMOCK_READY_LOG=Bot starting
 ```
 
-`pyproject.toml`
+Optional `pyproject.toml`
 
 ```toml
 [tool.tgmock]
@@ -40,6 +40,8 @@ bot_command = ["python", "main.py"]
 ready_log = "Bot starting"
 startup_timeout = 20
 ```
+
+`TGMOCK_READY_LOG` is an override. If it is missing, `tgmock` waits for the first bot request to the mock API.
 
 ## Command handling rules
 
@@ -71,6 +73,11 @@ If auto-patch is not applicable, make sure the bot reads `BOT_API_BASE` and poin
   - wrong `TGMOCK_READY_LOG`
   - missing env vars
   - bad bot command
+
+- `Timed out waiting for readiness`
+  - the bot never reached `tgmock`
+  - Node or Go bot is not wired to `BOT_API_BASE`
+  - Python auto-patch does not apply to this HTTP client
 
 - `404` from the mock server
   - bot is not using `BOT_API_BASE`

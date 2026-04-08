@@ -253,9 +253,11 @@ async def test_tap_silent(client: BotTestClient):
 
 def test_config_defaults():
     cfg = TgmockConfig()
+    assert cfg.bot_command is None
     assert cfg.port == 8999
     assert cfg.token == "test:token"
     assert cfg.settle_ms == 400
+    assert cfg.ready_log is None
     assert cfg.auto_patch is True
     assert cfg.build_command is None
     assert cfg.env == {}
@@ -263,6 +265,7 @@ def test_config_defaults():
 
 def test_config_load_missing_file(tmp_path):
     cfg = load_config(tmp_path)
+    assert cfg.bot_command is None
     assert cfg.port == 8999
 
 
