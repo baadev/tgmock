@@ -10,6 +10,7 @@ Fake Telegram API endpoints (aiogram / python-telegram-bot / etc. poll these):
   POST /bot{token}/answerCallbackQuery
   POST /bot{token}/sendChatAction
   POST /bot{token}/getMe
+  POST /bot{token}/getFile
   POST /bot{token}/deleteMessage
   POST /bot{token}/editMessageReplyMarkup
   POST /bot{token}/sendPhoto
@@ -30,9 +31,11 @@ Fake Telegram API endpoints (aiogram / python-telegram-bot / etc. poll these):
   POST /bot{token}/getMyCommands
   POST /bot{token}/setWebhook
   POST /bot{token}/deleteWebhook
+  GET  /file/bot{token}/{path}
 
 Test control endpoints:
   POST   /test/send              {"text": "...", "user_id": 123}
+  POST   /test/send-photo        {"user_id": 123, "caption": "...", "content": "..."}
   POST   /test/callback          {"data": "...", "user_id": 123, "message_id": 1}
   GET    /test/responses         → list of captured bot messages (optionally ?user_id=X)
   DELETE /test/responses         → clear captured list (optionally ?user_id=X)
@@ -47,9 +50,11 @@ Test control endpoints:
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import time
+from pathlib import PurePosixPath
 from aiohttp import web
 
 log = logging.getLogger(__name__)
@@ -108,6 +113,9 @@ class TelegramMockServer:
         # Persistent message store: (chat_id, message_id) → latest message state.
         # Survives test_clear so callback queries can reference original messages.
         self._messages: dict[tuple[int, int], dict] = {}
+        self._file_seq = 1
+        self._files_by_id: dict[str, dict] = {}
+        self._files_by_path: dict[str, dict] = {}
         # Optional reset hook: bot registers its callback URL here
         self._reset_url: str | None = None
         self._bot_activity_event = asyncio.Event()
@@ -125,6 +133,11 @@ class TelegramMockServer:
         mid = self._msg_id
         self._msg_id += 1
         return mid
+
+    def _next_file_id(self) -> str:
+        file_id = f"mock_file_{self._file_seq}"
+        self._file_seq += 1
+        return file_id
 
     def _fake_message(self, text: str, user_id: int, msg_id: int | None = None) -> dict:
         mid = msg_id or self._next_msg_id()
@@ -144,6 +157,51 @@ class TelegramMockServer:
     def _push_update(self, update: dict):
         self._updates.append(update)
         self._new_update.set()
+
+    def _register_file(
+        self,
+        *,
+        user_id: int | None,
+        content: bytes,
+        file_name: str,
+        file_path: str | None = None,
+        file_id: str | None = None,
+        content_type: str = "application/octet-stream",
+    ) -> dict:
+        resolved_file_id = str(file_id or self._next_file_id())
+        safe_name = PurePosixPath(file_name or f"{resolved_file_id}.bin").name
+        resolved_file_path = file_path or f"photos/{resolved_file_id}/{safe_name}"
+        entry = {
+            "user_id": user_id,
+            "file_id": resolved_file_id,
+            "file_unique_id": f"unique_{resolved_file_id}",
+            "file_size": len(content),
+            "file_path": resolved_file_path,
+            "content": content,
+            "content_type": content_type,
+        }
+        self._files_by_id[resolved_file_id] = entry
+        self._files_by_path[resolved_file_path] = entry
+        return entry
+
+    def _message_payload_from_record(
+        self,
+        stored: dict,
+        *,
+        chat_id: int,
+        message_id: int,
+    ) -> dict:
+        payload: dict = {
+            "message_id": message_id,
+            "chat": {"id": chat_id, "type": "private"},
+            "date": int(time.time()),
+            "from": {"id": 999999, "is_bot": True, "first_name": "MockBot"},
+        }
+        for key in ("text", "caption", "reply_markup", "photo", "video", "audio", "voice", "document"):
+            value = stored.get(key)
+            if value not in (None, "", []):
+                payload[key] = value
+        return payload
 
     def _record_response(self, chat_id: int, record: dict):
         """Store a bot response and wake up any waiters."""
@@ -178,12 +236,24 @@ class TelegramMockServer:
                 for key, value in self._messages.items()
                 if key[0] != user_id
             }
+            retained_files = {
+                file_id: value
+                for file_id, value in self._files_by_id.items()
+                if value.get("user_id") != user_id
+            }
+            self._files_by_id = retained_files
+            self._files_by_path = {
+                value["file_path"]: value
+                for value in retained_files.values()
+            }
         else:
             self._responses.clear()
             self._events.clear()
             self._response_seq.clear()
             self._last_response_at.clear()
             self._messages.clear()
+            self._files_by_id.clear()
+            self._files_by_path.clear()
 
         if call_hook and self._reset_url:
             import aiohttp as _aiohttp
@@ -290,6 +360,44 @@ class TelegramMockServer:
             },
         })
 
+    async def handle_get_file(self, request: web.Request) -> web.Response:
+        data = await read_telegram_request(request)
+        file_id = data.get("file_id")
+        if file_id in (None, ""):
+            raise web.HTTPBadRequest(text="file_id is required")
+
+        file_info = self._files_by_id.get(str(file_id))
+        if file_info is None:
+            return web.json_response(
+                {
+                    "ok": False,
+                    "error_code": 400,
+                    "description": "Bad Request: file not found",
+                }
+            )
+
+        return web.json_response(
+            {
+                "ok": True,
+                "result": {
+                    "file_id": file_info["file_id"],
+                    "file_unique_id": file_info["file_unique_id"],
+                    "file_size": file_info["file_size"],
+                    "file_path": file_info["file_path"],
+                },
+            }
+        )
+
+    async def handle_download_file(self, request: web.Request) -> web.Response:
+        file_path = request.match_info.get("file_path", "")
+        file_info = self._files_by_path.get(file_path)
+        if file_info is None:
+            raise web.HTTPNotFound(text="file not found")
+        return web.Response(
+            body=file_info["content"],
+            content_type=file_info.get("content_type", "application/octet-stream"),
+        )
+
     # ── Telegram API: no-ops ──────────────────────────────────────────────────
 
     async def handle_answer_callback_query(self, request: web.Request) -> web.Response:
@@ -331,12 +439,21 @@ class TelegramMockServer:
         data = await read_telegram_request(request)
         chat_id = int(data.get("chat_id", 0))
         mid = self._next_msg_id()
+        media_value = data.get(media_key)
+        if isinstance(media_value, dict):
+            media_payload = dict(media_value)
+        elif media_value not in (None, ""):
+            media_payload = {"file_id": str(media_value)}
+        else:
+            media_payload = {}
+        media_payload.setdefault("file_id", f"mock_{media_key}_{mid}")
         record = {
             "method": method,
             "chat_id": chat_id,
             "message_id": mid,
             "caption": data.get("caption", ""),
-            media_key: {"file_id": f"mock_{media_key}_{mid}"},
+            "reply_markup": data.get("reply_markup"),
+            media_key: media_payload,
         }
         self._record_response(chat_id, record)
         return web.json_response({
@@ -345,7 +462,8 @@ class TelegramMockServer:
                 "message_id": mid,
                 "chat": {"id": chat_id, "type": "private"},
                 "date": int(time.time()),
-                media_key: {"file_id": f"mock_{media_key}_{mid}"},
+                "caption": data.get("caption", ""),
+                media_key: media_payload,
             },
         })
 
@@ -451,6 +569,70 @@ class TelegramMockServer:
             "after_seq": self._response_seq.get(user_id, 0),
         })
 
+    async def test_send_photo(self, request: web.Request) -> web.Response:
+        """POST /test/send-photo  {"user_id": 111, "caption": "...", "content": "..."}"""
+        data = await request.json()
+        user_id = int(data.get("user_id", TEST_USER["id"]))
+        caption = data.get("caption", "")
+        file_name = str(data.get("file_name", "photo.jpg"))
+        mime_type = str(data.get("mime_type", "image/jpeg"))
+        raw_content = data.get("content")
+        raw_content_b64 = data.get("content_b64")
+        if raw_content_b64 not in (None, ""):
+            content = base64.b64decode(raw_content_b64)
+        elif raw_content not in (None, ""):
+            if isinstance(raw_content, str):
+                content = raw_content.encode("utf-8")
+            else:
+                content = json.dumps(raw_content, ensure_ascii=False).encode("utf-8")
+        else:
+            content = b"mock-photo-content"
+
+        file_info = self._register_file(
+            user_id=user_id,
+            content=content,
+            file_name=file_name,
+            file_path=data.get("file_path"),
+            file_id=data.get("file_id"),
+            content_type=mime_type,
+        )
+        msg_id = self._next_msg_id()
+        message = {
+            "message_id": msg_id,
+            "from": {**TEST_USER, "id": user_id},
+            "chat": {"id": user_id, "type": "private"},
+            "date": int(time.time()),
+            "photo": [
+                {
+                    "file_id": file_info["file_id"],
+                    "file_unique_id": file_info["file_unique_id"],
+                    "file_size": file_info["file_size"],
+                    "width": int(data.get("width", 640)),
+                    "height": int(data.get("height", 640)),
+                }
+            ],
+        }
+        if caption:
+            message["caption"] = caption
+
+        update = {
+            "update_id": self._next_update_id(),
+            "message": message,
+        }
+        self._push_update(update)
+        log.info(f"[USER→BOT] <photo> {caption!r}")
+        return web.json_response(
+            {
+                "ok": True,
+                "update_id": update["update_id"],
+                "after_seq": self._response_seq.get(user_id, 0),
+                "file": {
+                    "file_id": file_info["file_id"],
+                    "file_path": file_info["file_path"],
+                },
+            }
+        )
+
     # ── Test control: inject a callback query (button click) ──────────────────
 
     async def test_callback(self, request: web.Request) -> web.Response:
@@ -465,14 +647,14 @@ class TelegramMockServer:
         orig_text = stored.get("text", "")
         orig_markup = stored.get("reply_markup")
 
-        cb_message: dict = {
-            "message_id": message_id,
-            "chat": {"id": user_id, "type": "private"},
-            "date": int(time.time()),
-            "text": orig_text,
-            "from": {"id": 999999, "is_bot": True, "first_name": "MockBot"},
-        }
-        if orig_markup:
+        cb_message = self._message_payload_from_record(
+            stored,
+            chat_id=user_id,
+            message_id=message_id,
+        )
+        if "text" not in cb_message and orig_text:
+            cb_message["text"] = orig_text
+        if "reply_markup" not in cb_message and orig_markup:
             cb_message["reply_markup"] = orig_markup
 
         update = {
@@ -574,7 +756,7 @@ class TelegramMockServer:
         for uid, msgs in self._responses.items():
             last_text = ""
             if msgs:
-                last_text = msgs[-1].get("text", "")[:60]
+                last_text = (msgs[-1].get("text") or msgs[-1].get("caption") or "")[:60]
             result.append({
                 "user_id": uid,
                 "response_count": len(msgs),
@@ -641,6 +823,7 @@ class TelegramMockServer:
         app.router.add_post("/bot{token}/sendMessage", self.handle_send_message)
         app.router.add_post("/bot{token}/editMessageText", self.handle_edit_message_text)
         app.router.add_post("/bot{token}/getMe", self.handle_get_me)
+        app.router.add_post("/bot{token}/getFile", self.handle_get_file)
         app.router.add_post("/bot{token}/answerCallbackQuery", self.handle_answer_callback_query)
         app.router.add_post("/bot{token}/sendChatAction", self.handle_send_chat_action)
         app.router.add_post("/bot{token}/deleteMessage", self.handle_delete_message)
@@ -665,9 +848,11 @@ class TelegramMockServer:
         app.router.add_post("/bot{token}/getMyCommands", self._noop)
         app.router.add_post("/bot{token}/setWebhook", self._noop)
         app.router.add_post("/bot{token}/deleteWebhook", self._noop)
+        app.router.add_get("/file/bot{token}/{file_path:.*}", self.handle_download_file)
 
         # Test control endpoints
         app.router.add_post("/test/send", self.test_send)
+        app.router.add_post("/test/send-photo", self.test_send_photo)
         app.router.add_post("/test/callback", self.test_callback)
         app.router.add_get("/test/responses", self.test_responses)
         app.router.add_delete("/test/responses", self.test_clear)

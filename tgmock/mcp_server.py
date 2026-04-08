@@ -71,6 +71,23 @@ def tool_definitions() -> list[dict[str, Any]]:
             },
         },
         {
+            "name": "tg_send_photo",
+            "description": "Send a photo update as a test user and wait for the bot response.",
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "caption": {"type": "string"},
+                    "content": {"type": "string", "description": "Optional UTF-8 file contents for the mock photo download."},
+                    "content_b64": {"type": "string", "description": "Optional base64-encoded file contents for binary payloads."},
+                    "file_name": {"type": "string", "default": "photo.jpg"},
+                    "mime_type": {"type": "string", "default": "image/jpeg"},
+                    "user_id": {"type": "integer", "default": 111},
+                    "timeout": {"type": "number", "default": 25.0},
+                },
+                "required": [],
+            },
+        },
+        {
             "name": "tg_tap",
             "description": "Click an inline keyboard button by label (partial match).",
             "schema": {
@@ -172,6 +189,8 @@ async def dispatch_tool(name: str, arguments: dict[str, Any] | None = None) -> d
         return await _SESSION.start(**arguments)
     if name == "tg_send":
         return await _SESSION.send(**arguments)
+    if name == "tg_send_photo":
+        return await _SESSION.send_photo(**arguments)
     if name == "tg_tap":
         return await _SESSION.tap(**arguments)
     if name == "tg_snapshot":

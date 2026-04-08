@@ -17,9 +17,20 @@ Usage:
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+import base64
+from dataclasses import dataclass
 
 import aiohttp
+
+
+def _message_text(message: dict) -> str:
+    text = message.get("text")
+    if text not in (None, ""):
+        return str(text)
+    caption = message.get("caption")
+    if caption not in (None, ""):
+        return str(caption)
+    return ""
 
 
 @dataclass
@@ -30,12 +41,12 @@ class BotResponse:
     @property
     def text(self) -> str:
         """Text of the last message sent."""
-        return self.messages[-1]["text"] if self.messages else ""
+        return _message_text(self.messages[-1]) if self.messages else ""
 
     @property
     def all_text(self) -> str:
         """All message texts joined with newlines."""
-        return "\n".join(m.get("text", "") for m in self.messages)
+        return "\n".join(text for text in (_message_text(message) for message in self.messages) if text)
 
     @property
     def keyboard(self) -> dict | None:
@@ -108,6 +119,37 @@ class BotTestClient:
         async with self._session.post(
             f"{self.base_url}/test/send",
             json={"text": text, "user_id": self.user_id},
+        ) as r:
+            r.raise_for_status()
+            data = await r.json()
+        after_seq = data.get("after_seq", 0)
+        return await self._wait(timeout or self.default_timeout, after_seq=after_seq)
+
+    async def send_photo(
+        self,
+        *,
+        caption: str = "",
+        content: bytes | str | None = None,
+        file_name: str = "photo.jpg",
+        mime_type: str = "image/jpeg",
+        timeout: float | None = None,
+    ) -> BotResponse:
+        """Send a photo update. Returns bot response."""
+        payload: dict[str, object] = {
+            "caption": caption,
+            "file_name": file_name,
+            "mime_type": mime_type,
+            "user_id": self.user_id,
+        }
+        if isinstance(content, bytes):
+            payload["content_b64"] = base64.b64encode(content).decode("ascii")
+        elif isinstance(content, str):
+            payload["content"] = content
+
+        await self._clear()
+        async with self._session.post(
+            f"{self.base_url}/test/send-photo",
+            json=payload,
         ) as r:
             r.raise_for_status()
             data = await r.json()

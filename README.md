@@ -25,7 +25,7 @@ The flow is simple:
 1. You tell `tgmock` how to start your bot.
 2. `tgmock` starts a fake Telegram API on your machine.
 3. Your bot connects to that fake API instead of real Telegram.
-4. Codex uses `tg_*` tools like `tg_send` and `tg_tap` to simulate users.
+4. Codex uses `tg_*` tools like `tg_send`, `tg_send_photo`, and `tg_tap` to simulate users.
 5. You inspect the responses and logs until the flow is correct.
 
 ## Quick start
@@ -83,6 +83,7 @@ python3 scripts/register_codex_plugin.py
 This script is idempotent. It:
 
 - creates or updates `~/plugins/tgmock` as a symlink to this checkout
+- refreshes the Codex local-plugin cache from this checkout
 - creates or updates `~/.agents/plugins/marketplace.json`
 - preserves any other existing local plugin entries
 

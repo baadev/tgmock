@@ -275,6 +275,49 @@ class TgmockSession:
         messages = await self._get_responses(user_id)
         return {"ok": True, "snapshot": snapshot_text(messages), "messages": messages}
 
+    async def send_photo(
+        self,
+        *,
+        user_id: int = 111,
+        caption: str = "",
+        content: str | None = None,
+        content_b64: str | None = None,
+        file_name: str = "photo.jpg",
+        mime_type: str = "image/jpeg",
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        self._require_started()
+        session = await self._get_http_session()
+        settle_ms = self._settle_ms
+        await self._clear_user_outputs(user_id)
+        payload: dict[str, Any] = {
+            "user_id": user_id,
+            "caption": caption,
+            "file_name": file_name,
+            "mime_type": mime_type,
+        }
+        if content is not None:
+            payload["content"] = content
+        if content_b64 is not None:
+            payload["content_b64"] = content_b64
+        async with session.post(f"{self.base_url}/test/send-photo", json=payload) as resp:
+            data = await resp.json()
+        after_seq = data.get("after_seq", 0)
+        async with session.get(
+            f"{self.base_url}/test/wait-response",
+            params={
+                "user_id": user_id,
+                "after_seq": after_seq,
+                "settle_ms": settle_ms,
+                "timeout": timeout or self._default_timeout,
+            },
+        ) as resp:
+            result = await resp.json()
+        if not result.get("ok"):
+            return {"ok": False, "reason": result.get("reason", "timeout"), "snapshot": "(timeout)"}
+        messages = await self._get_responses(user_id)
+        return {"ok": True, "snapshot": snapshot_text(messages), "messages": messages}
+
     async def tap(self, label: str, user_id: int = 111, timeout: float | None = None) -> dict[str, Any]:
         self._require_started()
         session = await self._get_http_session()

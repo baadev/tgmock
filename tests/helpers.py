@@ -28,38 +28,65 @@ async def main() -> None:
             ) as response:
                 payload = await response.json()
 
-            for update in payload.get("result", []):
-                offset = update["update_id"] + 1
-                if "message" in update:
-                    message = update["message"]
-                    chat_id = message["chat"]["id"]
-                    text = message.get("text", "")
-                    await session.post(
-                        f"{BASE}/bot{TOKEN}/sendMessage",
-                        data={
-                            "chat_id": chat_id,
-                            "text": f"echo: {text}",
-                            "reply_markup": json.dumps(
-                                {
-                                    "inline_keyboard": [[
-                                        {"text": "Button A", "callback_data": "btn_a"},
-                                        {"text": "Button B", "callback_data": "btn_b"},
-                                    ]]
-                                }
-                            ),
-                        },
-                    )
-                elif "callback_query" in update:
-                    callback = update["callback_query"]
-                    chat_id = callback["message"]["chat"]["id"]
-                    await session.post(
-                        f"{BASE}/bot{TOKEN}/sendMessage",
-                        data={"chat_id": chat_id, "text": f"tap: {callback['data']}"},
-                    )
-                    await session.post(
-                        f"{BASE}/bot{TOKEN}/answerCallbackQuery",
-                        data={"callback_query_id": callback["id"]},
-                    )
+                for update in payload.get("result", []):
+                    offset = update["update_id"] + 1
+                    if "message" in update:
+                        message = update["message"]
+                        chat_id = message["chat"]["id"]
+                        if message.get("photo"):
+                            photo = message["photo"][-1]
+                            async with session.post(
+                                f"{BASE}/bot{TOKEN}/getFile",
+                                json={"file_id": photo["file_id"]},
+                            ) as response:
+                                file_payload = await response.json()
+                            file_path = file_payload["result"]["file_path"]
+                            async with session.get(
+                                f"{BASE}/file/bot{TOKEN}/{file_path}"
+                            ) as response:
+                                downloaded = (await response.read()).decode("utf-8")
+                            await session.post(
+                                f"{BASE}/bot{TOKEN}/sendPhoto",
+                                json={
+                                    "chat_id": chat_id,
+                                    "photo": photo["file_id"],
+                                    "caption": f"photo: {downloaded}",
+                                    "reply_markup": {
+                                        "inline_keyboard": [[
+                                            {"text": "Button A", "callback_data": "btn_a"},
+                                            {"text": "Button B", "callback_data": "btn_b"},
+                                        ]]
+                                    },
+                                },
+                            )
+                        else:
+                            text = message.get("text", "")
+                            await session.post(
+                                f"{BASE}/bot{TOKEN}/sendMessage",
+                                data={
+                                    "chat_id": chat_id,
+                                    "text": f"echo: {text}",
+                                    "reply_markup": json.dumps(
+                                        {
+                                            "inline_keyboard": [[
+                                                {"text": "Button A", "callback_data": "btn_a"},
+                                                {"text": "Button B", "callback_data": "btn_b"},
+                                            ]]
+                                        }
+                                    ),
+                                },
+                            )
+                    elif "callback_query" in update:
+                        callback = update["callback_query"]
+                        chat_id = callback["message"]["chat"]["id"]
+                        await session.post(
+                            f"{BASE}/bot{TOKEN}/sendMessage",
+                            data={"chat_id": chat_id, "text": f"tap: {callback['data']}"},
+                        )
+                        await session.post(
+                            f"{BASE}/bot{TOKEN}/answerCallbackQuery",
+                            data={"callback_query_id": callback["id"]},
+                        )
 
             await asyncio.sleep(0.05)
 
@@ -127,16 +154,34 @@ async function main() {
     for (const update of payload.result || []) {
       offset = update.update_id + 1;
       if (update.message) {
-        await api("sendMessage", {
-          chat_id: update.message.chat.id,
-          text: `echo: ${update.message.text || ""}`,
-          reply_markup: {
-            inline_keyboard: [[
-              { text: "Button A", callback_data: "btn_a" },
-              { text: "Button B", callback_data: "btn_b" },
-            ]],
-          },
-        });
+        if (update.message.photo && update.message.photo.length) {
+          const photo = update.message.photo[update.message.photo.length - 1];
+          const filePayload = await api("getFile", { file_id: photo.file_id });
+          const fileResponse = await fetch(`${base}/file/bot${token}/${filePayload.result.file_path}`);
+          const downloaded = Buffer.from(await fileResponse.arrayBuffer()).toString("utf8");
+          await api("sendPhoto", {
+            chat_id: update.message.chat.id,
+            photo: photo.file_id,
+            caption: `photo: ${downloaded}`,
+            reply_markup: {
+              inline_keyboard: [[
+                { text: "Button A", callback_data: "btn_a" },
+                { text: "Button B", callback_data: "btn_b" },
+              ]],
+            },
+          });
+        } else {
+          await api("sendMessage", {
+            chat_id: update.message.chat.id,
+            text: `echo: ${update.message.text || ""}`,
+            reply_markup: {
+              inline_keyboard: [[
+                { text: "Button A", callback_data: "btn_a" },
+                { text: "Button B", callback_data: "btn_b" },
+              ]],
+            },
+          });
+        }
       } else if (update.callback_query) {
         await api("sendMessage", {
           chat_id: update.callback_query.message.chat.id,

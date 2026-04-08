@@ -45,6 +45,7 @@ async def test_dispatch_tool_restart_smoke(tmp_path):
 def test_tool_definitions_include_project_root_and_expected_tools():
     definitions = {tool["name"]: tool for tool in mcp_server.tool_definitions()}
     assert "tg_start" in definitions
+    assert "tg_send_photo" in definitions
     assert "tg_restart" in definitions
     assert "project_root" in definitions["tg_start"]["schema"]["properties"]
     assert "project_root" in definitions["tg_restart"]["schema"]["properties"]

@@ -116,6 +116,17 @@ async def test_session_start_auto_detects_node_project(tmp_path):
         assert "echo: hello" not in tapped["snapshot"]
         assert len(tapped["messages"]) == 1
         assert tapped["messages"][0]["text"] == "tap: btn_a"
+
+        media = await session.send_photo(content="node-image")
+        assert media["ok"] is True
+        assert "[Bot] [Photo] photo: node-image" in media["snapshot"]
+        assert len(media["messages"]) == 1
+        assert media["messages"][0]["caption"] == "photo: node-image"
+        assert media["messages"][0]["reply_markup"]["inline_keyboard"][0][0]["text"] == "Button A"
+
+        media_tapped = await session.tap("Button B")
+        assert media_tapped["ok"] is True
+        assert "tap: btn_b" in media_tapped["snapshot"]
     finally:
         await session.stop()
 

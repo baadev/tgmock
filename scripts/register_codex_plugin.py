@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +38,11 @@ def parse_args() -> argparse.Namespace:
         "--marketplace-path",
         default=str(home / ".agents" / "plugins" / "marketplace.json"),
         help="Path to the user-local Codex marketplace file.",
+    )
+    parser.add_argument(
+        "--codex-cache-dir",
+        default=str(home / ".codex" / "plugins" / "cache"),
+        help="Root directory for the Codex local-plugin cache.",
     )
     return parser.parse_args()
 
@@ -133,11 +139,57 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
         handle.write("\n")
 
 
+def plugin_cache_path(
+    cache_dir: Path,
+    plugin_name: str,
+    *,
+    marketplace_name: str = DEFAULT_MARKETPLACE_NAME,
+) -> Path:
+    return cache_dir / marketplace_name / plugin_name / "local"
+
+
+def sync_cache_copy(
+    repo_root: Path,
+    plugin_name: str,
+    cache_dir: Path,
+    *,
+    marketplace_name: str = DEFAULT_MARKETPLACE_NAME,
+) -> tuple[Path, str]:
+    destination = plugin_cache_path(
+        cache_dir,
+        plugin_name,
+        marketplace_name=marketplace_name,
+    )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+
+    status = "created"
+    if destination.is_symlink() or destination.is_file():
+        destination.unlink()
+        status = "refreshed"
+    elif destination.exists():
+        shutil.rmtree(destination)
+        status = "refreshed"
+
+    shutil.copytree(
+        repo_root,
+        destination,
+        ignore=shutil.ignore_patterns(
+            ".git",
+            ".pytest_cache",
+            "__pycache__",
+            ".venv",
+            ".venv-test",
+        ),
+    )
+    return destination, status
+
+
 def main() -> None:
     args = parse_args()
     repo_root = Path(args.repo_root).expanduser().resolve()
     plugins_dir = Path(args.plugins_dir).expanduser().resolve()
     marketplace_path = Path(args.marketplace_path).expanduser().resolve()
+    codex_cache_dir = Path(args.codex_cache_dir).expanduser().resolve()
 
     if not repo_root.exists():
         raise FileNotFoundError(f"Repository path does not exist: {repo_root}")
@@ -156,6 +208,7 @@ def main() -> None:
 
     symlink_path = plugins_dir / plugin_name
     symlink_status = ensure_symlink(symlink_path, repo_root)
+    cache_path, cache_status = sync_cache_copy(repo_root, plugin_name, codex_cache_dir)
 
     marketplace = load_marketplace(marketplace_path)
     entry_status = upsert_plugin_entry(
@@ -166,6 +219,7 @@ def main() -> None:
 
     print(f"Plugin: {plugin_name}")
     print(f"Symlink: {symlink_path} -> {repo_root} ({symlink_status})")
+    print(f"Cache: {cache_path} ({cache_status})")
     print(f"Marketplace: {marketplace_path} ({entry_status})")
 
 

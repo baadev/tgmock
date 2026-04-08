@@ -42,17 +42,42 @@ async def _run_echo_bot(mock: TelegramMockServer, stop_event: asyncio.Event):
                     if "message" in update:
                         msg = update["message"]
                         chat_id = msg["chat"]["id"]
-                        text = msg.get("text", "")
-                        await session.post(f"{base}/bot{token}/sendMessage", data={
-                            "chat_id": chat_id,
-                            "text": f"echo: {text}",
-                            "reply_markup": json.dumps({
-                                "inline_keyboard": [[
-                                    {"text": "Button A", "callback_data": "btn_a"},
-                                    {"text": "Button B", "callback_data": "btn_b"},
-                                ]]
-                            }),
-                        })
+                        if msg.get("photo"):
+                            photo = msg["photo"][-1]
+                            async with session.post(
+                                f"{base}/bot{token}/getFile",
+                                json={"file_id": photo["file_id"]},
+                            ) as response:
+                                file_payload = await response.json()
+                            file_path = file_payload["result"]["file_path"]
+                            async with session.get(f"{base}/file/bot{token}/{file_path}") as response:
+                                downloaded = (await response.read()).decode("utf-8")
+                            await session.post(
+                                f"{base}/bot{token}/sendPhoto",
+                                json={
+                                    "chat_id": chat_id,
+                                    "photo": photo["file_id"],
+                                    "caption": f"photo: {downloaded}",
+                                    "reply_markup": {
+                                        "inline_keyboard": [[
+                                            {"text": "Button A", "callback_data": "btn_a"},
+                                            {"text": "Button B", "callback_data": "btn_b"},
+                                        ]]
+                                    },
+                                },
+                            )
+                        else:
+                            text = msg.get("text", "")
+                            await session.post(f"{base}/bot{token}/sendMessage", data={
+                                "chat_id": chat_id,
+                                "text": f"echo: {text}",
+                                "reply_markup": json.dumps({
+                                    "inline_keyboard": [[
+                                        {"text": "Button A", "callback_data": "btn_a"},
+                                        {"text": "Button B", "callback_data": "btn_b"},
+                                    ]]
+                                }),
+                            })
                     elif "callback_query" in update:
                         cq = update["callback_query"]
                         chat_id = cq["message"]["chat"]["id"]
@@ -133,6 +158,43 @@ async def test_tap_missing_button_raises(client: BotTestClient):
     resp = await client.send("hi")
     with pytest.raises(ValueError, match="not found"):
         await client.tap("nonexistent", resp)
+
+
+async def test_send_photo_with_reply_markup_and_tap(client: BotTestClient):
+    resp = await client.send_photo(caption="upload", content="image-bytes")
+    assert resp.text == "photo: image-bytes"
+    assert resp.has_button("Button A")
+    assert resp.has_button("Button B")
+
+    resp2 = await client.tap("Button A", resp)
+    assert "btn_a" in resp2.text
+
+
+async def test_test_send_photo_registers_downloadable_file(mock_server: TelegramMockServer):
+    import aiohttp
+
+    user_id = next_user_id()
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            "http://localhost:18999/test/send-photo",
+            json={"user_id": user_id, "content": "raw-image", "file_name": "upload.jpg"},
+        ) as response:
+            payload = await response.json()
+
+        file_id = payload["file"]["file_id"]
+        file_path = payload["file"]["file_path"]
+
+        async with session.post(
+            "http://localhost:18999/bottest:token/getFile",
+            json={"file_id": file_id},
+        ) as response:
+            file_payload = await response.json()
+        assert file_payload["ok"] is True
+        assert file_payload["result"]["file_path"] == file_path
+
+        async with session.get(f"http://localhost:18999/file/bottest:token/{file_path}") as response:
+            downloaded = await response.read()
+        assert downloaded == b"raw-image"
 
 
 async def test_bot_response_properties(client: BotTestClient):
