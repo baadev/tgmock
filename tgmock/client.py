@@ -175,6 +175,7 @@ class BotTestClient:
     async def clear(self):
         """Manually clear captured responses and events."""
         await self._clear()
+        await self._clear_events()
 
     async def responses(self) -> list[dict]:
         """Return all currently captured responses (without clearing)."""
@@ -236,6 +237,12 @@ class BotTestClient:
     async def _clear(self):
         async with self._session.delete(
             f"{self.base_url}/test/responses", params={"user_id": self.user_id}
+        ) as r:
+            r.raise_for_status()
+
+    async def _clear_events(self):
+        async with self._session.delete(
+            f"{self.base_url}/test/events", params={"user_id": self.user_id}
         ) as r:
             r.raise_for_status()
 

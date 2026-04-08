@@ -1,0 +1,29 @@
+{
+  "name": "tgmock",
+  "version": "0.2.0",
+  "description": "Telegram bot testing for Codex via a fake Bot API, pytest fixtures, and MCP tools",
+  "author": {
+    "name": "tgmock contributors",
+    "url": "https://github.com/amady/tgmock"
+  },
+  "homepage": "https://github.com/amady/tgmock",
+  "repository": "https://github.com/amady/tgmock",
+  "license": "MIT",
+  "keywords": ["telegram", "bot", "testing", "pytest", "mcp", "codex"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "tgmock",
+    "shortDescription": "Test Telegram bots inside Codex",
+    "longDescription": "Run Telegram bot flows against a fake Bot API from Codex, inspect snapshots, tap buttons, and debug startup/logging issues.",
+    "developerName": "tgmock contributors",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive"],
+    "websiteURL": "https://github.com/amady/tgmock",
+    "defaultPrompt": [
+      "Set up tgmock for this Telegram bot project",
+      "Start tgmock and test the /start flow",
+      "Debug why this Telegram bot does not respond"
+    ]
+  }
+}

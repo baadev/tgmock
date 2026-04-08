@@ -15,6 +15,8 @@ import os
 import tempfile
 from pathlib import Path
 
+from tgmock._commands import is_python_command, prepend_pythonpath
+
 # Self-contained Python source injected via sitecustomize.py.
 # Placeholders {mock_base} and {mock_host}:{mock_port} are filled at generation time.
 _SITECUSTOMIZE_TEMPLATE = '''\
@@ -113,13 +115,6 @@ def prepare_autopatch(mock_base_url: str) -> tuple[str, dict[str, str]]:
     site_file.write_text(code)
 
     # Prepend to PYTHONPATH so sitecustomize.py is found first.
-    existing = os.environ.get("PYTHONPATH", "")
-    new_path = f"{tmpdir}:{existing}" if existing else tmpdir
+    new_path = prepend_pythonpath(os.environ, tmpdir)
 
     return tmpdir, {"PYTHONPATH": new_path}
-
-
-def is_python_command(cmd: str) -> bool:
-    """Heuristic: does the bot command start a Python interpreter?"""
-    first = cmd.strip().split()[0] if cmd.strip() else ""
-    return first in ("python", "python3", "python3.11", "python3.12", "python3.13")

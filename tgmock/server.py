@@ -127,6 +127,38 @@ class TelegramMockServer:
         if mid is not None:
             self._messages[(chat_id, mid)] = record
 
+    async def reset_state(self, user_id: int | None = None, *, call_hook: bool = False) -> None:
+        """Clear accumulated state for one user or all users."""
+        if user_id is not None:
+            self._responses.pop(user_id, None)
+            self._events.pop(user_id, None)
+            self._response_seq.pop(user_id, None)
+            self._last_response_at.pop(user_id, None)
+            self._messages = {
+                key: value
+                for key, value in self._messages.items()
+                if key[0] != user_id
+            }
+        else:
+            self._responses.clear()
+            self._events.clear()
+            self._response_seq.clear()
+            self._last_response_at.clear()
+            self._messages.clear()
+
+        if call_hook and self._reset_url:
+            import aiohttp as _aiohttp
+
+            try:
+                async with _aiohttp.ClientSession() as session:
+                    await session.post(
+                        self._reset_url,
+                        json={"user_id": user_id},
+                        timeout=_aiohttp.ClientTimeout(total=3.0),
+                    )
+            except Exception as exc:
+                log.warning(f"[TGMOCK] reset hook call failed: {exc}")
+
     # ── Telegram API: getUpdates (long-poll) ──────────────────────────────────
 
     async def handle_get_updates(self, request: web.Request) -> web.Response:
@@ -485,30 +517,11 @@ class TelegramMockServer:
         """
         uid_str = request.rel_url.query.get("user_id")
         uid = int(uid_str) if uid_str else None
+        await self.reset_state(user_id=uid, call_hook=True)
+        return web.json_response({"ok": True})
 
-        if uid is not None:
-            self._responses.pop(uid, None)
-            self._events.pop(uid, None)
-            self._response_seq.pop(uid, None)
-            self._last_response_at.pop(uid, None)
-        else:
-            self._responses.clear()
-            self._events.clear()
-            self._response_seq.clear()
-            self._last_response_at.clear()
-
-        if self._reset_url:
-            import aiohttp as _aiohttp
-            try:
-                async with _aiohttp.ClientSession() as s:
-                    await s.post(
-                        self._reset_url,
-                        json={"user_id": uid},
-                        timeout=_aiohttp.ClientTimeout(total=3.0),
-                    )
-            except Exception as e:
-                log.warning(f"[TGMOCK] reset hook call failed: {e}")
-
+    async def test_reset_all(self, request: web.Request) -> web.Response:
+        await self.reset_state(call_hook=True)
         return web.json_response({"ok": True})
 
     # ── Test control: list active users ──────────────────────────────────────
@@ -615,6 +628,7 @@ class TelegramMockServer:
         app.router.add_delete("/test/events", self.test_clear_events)
         app.router.add_post("/test/register-reset", self.test_register_reset)
         app.router.add_post("/test/reset-user", self.test_reset_user)
+        app.router.add_post("/test/reset-all", self.test_reset_all)
         app.router.add_get("/test/wait-response", self.test_wait_response)
         app.router.add_get("/test/users", self.test_users)
         return app

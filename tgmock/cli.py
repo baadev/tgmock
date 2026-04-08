@@ -2,7 +2,7 @@
 CLI entry point: `tgmock serve --port 8999`
 
 Starts the fake Telegram API server standalone (without a bot).
-Useful for debugging, manual testing, or as a backend for the MCP server.
+Useful for debugging, manual testing, or as a backend for the Codex MCP server.
 """
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ def main() -> None:
     serve_parser.add_argument("--port", type=int, default=8999, help="Port to listen on (default: 8999)")
     serve_parser.add_argument("--token", default="test:token", help="Fake bot token (default: test:token)")
 
-    mcp_parser = subparsers.add_parser("mcp", help="Start the MCP server (requires tgmock[mcp])")
+    subparsers.add_parser("mcp", help="Start the Codex MCP server (requires tgmock[mcp])")
 
     args = parser.parse_args()
 

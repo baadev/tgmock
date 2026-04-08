@@ -1,105 +1,89 @@
 ---
 name: tgmock:setup
-description: Guide per-project setup for tgmock bot testing. Use this skill whenever a user wants to set up, configure, or install tgmock for their Telegram bot project — even if they just say "I want to test my bot" or "set up testing" without mentioning tgmock by name. Also use when they hit setup-related errors like "Bot exited before ready" or "port in use".
+description: Set up tgmock for a Telegram bot project in Codex. Use this skill whenever the user wants to configure, install, or debug tgmock setup for a Telegram bot, including cases like "set up bot testing", "wire tgmock into this project", "why does tg_start fail", or "make this bot testable in Codex".
 ---
 
-You are helping the user configure tgmock for their Telegram bot project.
+You are configuring `tgmock` for a Telegram bot project so Codex can test it through the local MCP tools.
 
-## Step 1: Check if tgmock is installed
+## Workflow
 
-```bash
-which tgmock && tgmock mcp --help > /dev/null 2>&1 && echo "ok"
-```
+1. Inspect the project first.
+   - Find the bot entrypoint.
+   - Find what the bot prints when it is actually ready.
+   - Check whether the bot already supports `BOT_API_BASE`.
+   - Check whether the runtime is Python with `aiohttp` or `httpx`, because that enables auto-patch.
 
-If not installed:
-```bash
-pipx install "tgmock[mcp]"
-```
+2. Configure tgmock in the target project.
+   - Prefer updating the project's `.env` or `pyproject.toml`.
+   - Keep `project_root` explicit when later calling `tg_start`; do not assume the MCP server cwd matches the bot project.
 
-## Step 2: Configure the project
+3. Verify with the MCP tools.
+   - Start with `tg_start(project_root=...)`.
+   - Send a simple message with `tg_send`.
+   - Inspect failures with `tg_logs`.
+   - Stop the session with `tg_stop` after verification.
 
-Add these to the project's `.env` file:
+## Recommended configuration
+
+`.env`
 
 ```env
-# Required
-TGMOCK_BOT_COMMAND=python main.py        # command to start your bot
-TGMOCK_READY_LOG=Bot starting            # substring in bot output that means "ready"
-
-# For compiled languages (Go, Rust) — pre-build before starting
-# TGMOCK_BUILD_COMMAND=go build -o /tmp/mybot ./cmd/server
-# TGMOCK_BOT_COMMAND=/tmp/mybot
-
-# Optional overrides
-# TGMOCK_PORT=8999
-# TGMOCK_STARTUP_TIMEOUT=30
-# TGMOCK_AUTO_PATCH=true              # enabled by default for Python bots
+TGMOCK_BOT_COMMAND=python main.py
+TGMOCK_READY_LOG=Bot starting
 ```
 
-Or configure in `pyproject.toml`:
+`pyproject.toml`
+
 ```toml
 [tool.tgmock]
-bot_command = "python main.py"
+bot_command = ["python", "main.py"]
 ready_log = "Bot starting"
+startup_timeout = 20
 ```
 
-**How to find TGMOCK_READY_LOG**: look at what your bot prints when it's ready to receive messages. For aiogram bots it's usually "Bot starting" or "Polling started". Run the bot command and look at the first log lines.
+## Command handling rules
 
-## Step 3: Auto-patch (Python bots — no code changes needed!)
+- `tgmock` does not use an implicit shell.
+- Strings are parsed with `shlex.split`.
+- If the project needs shell syntax, configure it explicitly, for example:
 
-For **Python bots** (aiogram, python-telegram-bot, etc.), tgmock automatically patches HTTP clients (aiohttp, httpx) so your bot talks to the mock server without any code changes. This is enabled by default — just configure `.env` and go.
-
-To disable auto-patching (e.g. if you already have `BOT_API_BASE` support):
-```env
-TGMOCK_AUTO_PATCH=false
+```toml
+build_command = ["bash", "-lc", "go build -o /tmp/mybot ./cmd/server"]
 ```
 
-## Step 3b: Manual setup (non-Python bots or auto_patch=false)
+## Auto-patch guidance
 
-If auto-patch is disabled or you're using a non-Python bot, add `BOT_API_BASE` support manually. tgmock injects `BOT_API_BASE` automatically — the bot must use it to redirect API calls to the mock server.
+For Python bots launched through Python, `tgmock` can auto-patch `aiohttp` and `httpx` so no bot code changes are needed.
 
-**For aiogram 3.x** — add these lines to `main.py`:
-```python
-import os
-from aiogram.client.session.aiohttp import AiohttpSession
-from aiogram.client.telegram import TelegramAPIServer
+Disable auto-patch only when:
 
-api_base = os.environ.get("BOT_API_BASE")
-if api_base:
-    session = AiohttpSession(api=TelegramAPIServer.from_base(api_base))
-    bot = Bot(token=config.bot_token, session=session)
-else:
-    bot = Bot(token=config.bot_token)
-```
+- the project is not Python
+- the bot already has correct `BOT_API_BASE` wiring
+- the user explicitly wants manual control
 
-**For python-telegram-bot**:
-```python
-import os
-base_url = os.environ.get("BOT_API_BASE", "https://api.telegram.org/bot")
-application = Application.builder().token(TOKEN).base_url(base_url).build()
-```
+## Manual wiring guidance
 
-**For Go (telegram-bot-api)**:
-```go
-bot, err := tgbotapi.NewBotAPIWithAPIEndpoint(token, os.Getenv("BOT_API_BASE")+"/bot%s/%s")
-```
+If auto-patch is not applicable, make sure the bot reads `BOT_API_BASE` and points the Telegram API client at it.
 
-**For Node.js (telegraf)**:
-```js
-const bot = new Telegraf(token, {
-  telegram: { apiRoot: process.env.BOT_API_BASE || 'https://api.telegram.org' }
-})
-```
+## Common setup failures
 
-## Step 4: Verify setup
+- `Bot exited before ready`
+  - wrong `TGMOCK_READY_LOG`
+  - missing env vars
+  - bad bot command
 
-Use `tg_start` to test. If it fails, `tg_logs` will show what the bot printed.
+- `404` from the mock server
+  - bot is not using `BOT_API_BASE`
+  - auto-patch is not active
 
-```
-tg_start → tg_send("hello") → tg_snapshot → tg_stop
-```
+- no responses after `tg_send`
+  - bot never reached polling loop
+  - wrong token/base URL wiring
+  - startup log looked ready but actual loop failed immediately afterward
 
-Common issues:
-- **"Bot exited before ready"**: wrong TGMOCK_READY_LOG, or missing env vars. Check `tg_logs`.
-- **Bot responds with 404**: BOT_API_BASE not wired up and auto-patch not active. Check if your bot uses aiohttp or httpx (auto-patch supports these).
-- **Port in use**: another tgmock session running. Call `tg_stop` first.
-- **Auto-patch not working**: make sure TGMOCK_BOT_COMMAND starts with `python` or `python3`. For virtual envs, use the full path: `TGMOCK_BOT_COMMAND=.venv/bin/python main.py`.
+Always finish setup verification with:
+
+1. `tg_start(project_root=...)`
+2. `tg_send("hello")`
+3. `tg_snapshot()`
+4. `tg_stop()`

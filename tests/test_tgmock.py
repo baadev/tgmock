@@ -101,10 +101,11 @@ async def client(mock_server: TelegramMockServer):
 # ── Tests: imports ────────────────────────────────────────────────────────────
 
 async def test_imports():
-    from tgmock import TelegramMockServer, BotTestClient, BotResponse
+    from tgmock import TelegramMockServer, BotTestClient, BotResponse, TgmockSession
     assert TelegramMockServer
     assert BotTestClient
     assert BotResponse
+    assert TgmockSession
 
 
 # ── Tests: send / tap ─────────────────────────────────────────────────────────
@@ -217,6 +218,18 @@ async def test_reset_clears_state(client: BotTestClient):
     assert await client.events() == []
 
 
+async def test_clear_clears_events_too(client: BotTestClient):
+    import aiohttp
+    async with aiohttp.ClientSession() as s:
+        await s.post("http://localhost:18999/test/event", json={
+            "user_id": client.user_id,
+            "type": "tool_call",
+            "data": {"tool": "x"},
+        })
+    await client.clear()
+    assert await client.events() == []
+
+
 # ── Tests: users endpoint ─────────────────────────────────────────────────────
 
 async def test_users_endpoint(mock_server: TelegramMockServer, client: BotTestClient):
@@ -244,6 +257,7 @@ def test_config_defaults():
     assert cfg.token == "test:token"
     assert cfg.settle_ms == 400
     assert cfg.auto_patch is True
+    assert cfg.build_command is None
     assert cfg.env == {}
 
 
@@ -260,6 +274,15 @@ def test_config_load_from_toml(tmp_path):
     assert cfg.port == 1234
     assert cfg.ready_log == "ready"
     assert cfg.env == {"FOO": "bar"}
+
+
+def test_config_load_command_list_from_toml(tmp_path):
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.tgmock]\nbot_command = ["python", "bot.py"]\nbuild_command = ["python", "-m", "compileall", "."]\n'
+    )
+    cfg = load_config(tmp_path)
+    assert cfg.bot_command == ["python", "bot.py"]
+    assert cfg.build_command == ["python", "-m", "compileall", "."]
 
 
 # ── Tests: user_id ────────────────────────────────────────────────────────────
@@ -284,6 +307,8 @@ def test_is_python_command():
     assert is_python_command("python main.py") is True
     assert is_python_command("python3 main.py") is True
     assert is_python_command("python3.12 bot.py") is True
+    assert is_python_command(".venv/bin/python bot.py") is True
+    assert is_python_command(["bash", "-lc", "python bot.py"]) is True
     assert is_python_command("node bot.js") is False
     assert is_python_command("./mybot") is False
     assert is_python_command("go run .") is False

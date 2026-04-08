@@ -1,113 +1,88 @@
 ---
 name: tgmock:test
-description: Interactive Telegram bot testing workflow using tg_* MCP tools. Use this skill whenever the user wants to test, debug, or verify their Telegram bot — including when they say "test my bot", "try sending a message", "check if the bot works", "debug the bot", or want to verify a specific bot flow or feature. Also triggers when the user mentions tg_start, tg_send, tg_tap, or other tgmock tools.
+description: Test and debug Telegram bots through tgmock inside Codex. Use this skill whenever the user wants to exercise a Telegram bot flow, verify buttons, debug startup or response issues, or explicitly mentions tg_start, tg_send, tg_tap, tg_snapshot, tg_logs, tg_restart, or tg_reset.
 ---
 
-You are an interactive Telegram bot tester. Use the tgmock MCP tools to test the bot.
+You are testing a Telegram bot through `tgmock` MCP tools inside Codex.
 
-## Tool Reference
+## Core rules
 
-| Tool | What it does |
-|------|-------------|
-| `tg_start` | Start mock Telegram API + bot subprocess. Reads `.env` automatically. Python bots are auto-patched — no code changes needed. |
-| `tg_send(text)` | Send a message as a test user, wait for bot response. |
-| `tg_tap(label)` | Click an inline keyboard button by label (partial match). |
-| `tg_snapshot` | Get the current conversation state without sending anything. |
-| `tg_logs(tail=50)` | Get last N lines of bot stdout/stderr. |
-| `tg_restart` | Restart the bot + reset mock state (keeps server running). |
-| `tg_reset` | Reset a user's state: clear responses, events, trigger bot reset hook. |
-| `tg_events` | Get custom events posted by the bot (e.g. tool calls, DB writes). |
-| `tg_users` | List active test users. |
-| `tg_stop` | Stop everything. |
+1. Inspect the target project first.
+   - Confirm the project root.
+   - Confirm how the bot is started.
+   - Confirm the likely readiness log if startup is not already configured.
 
-## Basic workflow
+2. Start explicitly with `project_root`.
+   - Use `tg_start(project_root=...)` unless you are certain the MCP server already runs from the correct root.
 
-```
-1. tg_start()                    # start bot (reads .env config, auto-patches Python bots)
-2. tg_send("/start")             # send a message
-3. tg_snapshot()                 # inspect what the bot said
-4. tg_tap("Button label")        # click a button
-5. tg_send("some text")          # continue the conversation
-6. tg_stop()                     # clean up
+3. Test the flow directly.
+   - `tg_send` for user messages
+   - `tg_tap` for inline keyboard buttons
+   - `tg_snapshot` for current state
+   - `tg_events` for side effects
+   - `tg_logs` for stdout/stderr diagnosis
+
+4. Clean up.
+   - Use `tg_stop()` when the session is no longer needed.
+
+## Typical flow
+
+```text
+tg_start(project_root="...")
+tg_send("/start")
+tg_snapshot()
+tg_tap("Settings")
+tg_logs()
+tg_stop()
 ```
 
 ## Testing patterns
 
-### Verify a command flow
-Send a command and check the response contains what you expect:
-```
-tg_start()
-tg_send("/start")
-# Check snapshot for welcome message, buttons, expected text
-tg_send("/help")
-# Check snapshot for help text
-tg_stop()
+### Command flow
+
+- send `/start`
+- confirm greeting text
+- send `/help`
+- confirm help text
+
+### Button flow
+
+- call `tg_send` to render the menu
+- call `tg_tap("Visible button label")`
+- inspect the next snapshot
+
+### Multi-step flow
+
+- send the first command
+- answer each question with `tg_send`
+- inspect snapshots between steps when the branch matters
+
+### Multi-user flow
+
+Use `user_id` to keep sessions independent:
+
+```text
+tg_send("hello", user_id=111)
+tg_send("hello", user_id=222)
+tg_snapshot(user_id=222)
 ```
 
-### Test button interactions
-When the bot shows inline keyboard buttons, use `tg_tap` to click them by label.
-`tg_tap` automatically looks up the callback_data from the button label — you don't need to know the raw data:
-```
-tg_send("/menu")
-# Bot shows buttons — tap one by its visible label
-tg_tap("Settings")
-# Bot shows settings — tap deeper (works even if bot edits the message)
-tg_tap("Language")
-```
+### Side-effect assertions
 
-For **reply keyboard** buttons (the persistent buttons at the bottom of the chat), use `tg_send` with the button text instead of `tg_tap`:
-```
-tg_send("🌅 Утро")     # reply keyboard button
-```
+If the bot posts structured test events, inspect them with `tg_events(type="...")` instead of inferring everything from UI text.
 
-### Test multi-step flows
-For flows that require several user inputs (onboarding, forms, quizzes):
-```
-tg_send("/register")
-# Bot asks for name
-tg_send("John")
-# Bot asks for email
-tg_send("john@example.com")
-# Bot confirms registration
-```
+## Debugging workflow
 
-### Test error handling
-Send unexpected input to verify the bot handles it gracefully:
-```
-tg_send("")               # empty message
-tg_send("asdkjhasdkjh")   # gibberish
-tg_send("/nonexistent")   # unknown command
-```
+When the bot fails or times out:
 
-### Multi-user testing
-Use `user_id` parameter to simulate multiple users:
-```
-tg_send("hello", user_id=111)    # user 1
-tg_send("hi", user_id=222)       # user 2 (independent session)
-tg_snapshot(user_id=222)         # see user 2's conversation
-```
+1. read `tg_logs()`
+2. inspect `tg_snapshot()`
+3. inspect `tg_events()`
+4. use `tg_restart(project_root=...)` if the process needs a clean restart
 
-### Assert side effects with events
-If the bot posts custom events (DB writes, API calls), verify them:
-```
-tg_send("/delete_account")
-tg_tap("Confirm")
-tg_events(type="db_write")       # check that deletion was recorded
-```
+## Practical guidance
 
-## Debugging failures
-
-When something goes wrong:
-1. `tg_logs()` — see what the bot printed (errors, stack traces)
-2. `tg_snapshot()` — see the current conversation state
-3. `tg_events()` — see any custom events/tool calls the bot posted
-4. `tg_restart()` — restart fresh if the bot is in a bad state
-
-## Tips
-
-- `tg_send` waits up to 25s for a response — if timeout, check `tg_logs` for errors
-- `tg_tap` does partial case-insensitive button match — "next" matches "Next step"
-- Between test scenarios, use `tg_reset()` to clear user state without restarting
-- Use `tg_restart()` to reset everything when bot state is corrupted between runs
-- `tg_events` is useful for asserting side effects (DB writes, AI calls) without checking UI text
-- Auto-patch handles Python bots automatically — no need to add BOT_API_BASE support to your code
+- `tg_tap` does partial case-insensitive matching.
+- Reply keyboard buttons should usually be sent through `tg_send("Button text")`.
+- `tg_reset(user_id=...)` is cheaper than restarting the whole session when only one user state is dirty.
+- If startup problems persist, fix configuration first instead of brute-forcing more test steps.
