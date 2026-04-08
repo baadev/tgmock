@@ -24,14 +24,17 @@
 
 ## Why tgmock
 
-When your bot talks to the real Telegram API, tests are often slow and brittle.
-`tgmock` starts a local HTTP mock of the Bot API so you can:
+`tgmock` is built for **Codex-driven Telegram bot test automation**.
+Instead of checking isolated handlers, you can ask Codex to run realistic user flows end-to-end through a local Bot API mock.
+
+**Now you can ask Codex to test real bot scenarios from the user’s point of view.**
+
+With `tgmock`, Codex (or `pytest`) can:
 
 - send text and photo updates,
 - press inline buttons,
 - inspect bot responses and logs,
-- collect custom events,
-- run the same flow via Codex MCP tools or `pytest`.
+- collect custom events.
 
 ## What’s included
 
