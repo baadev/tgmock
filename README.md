@@ -1,431 +1,208 @@
+<div align="center">
+
 # tgmock
 
-Telegram bot testing for OpenAI Codex: fake Telegram Bot API server, pytest fixtures, and Codex MCP tools.
+### Test Telegram bots locally without hitting the real Telegram API
 
-Works with any bot framework that talks to the Telegram Bot API, including aiogram, python-telegram-bot, Telegraf, and go-telegram-bot-api.
+<p>
+  <a href="./README.md"><strong>English</strong></a> · <a href="./README.ru.md">Русский</a>
+</p>
 
-## What is this
+<p>
+  <img alt="Python" src="https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white">
+  <img alt="Version" src="https://img.shields.io/badge/version-0.2.0-7B61FF">
+  <img alt="Pytest plugin" src="https://img.shields.io/badge/pytest-plugin-0A9EDC?logo=pytest&logoColor=white">
+  <img alt="MCP" src="https://img.shields.io/badge/Codex-MCP%20tools-111827">
+  <img alt="License" src="https://img.shields.io/badge/license-MIT-22C55E">
+</p>
 
-`tgmock` helps you test a Telegram bot locally without real Telegram.
+</div>
 
-Instead of sending requests to the real Telegram Bot API, your bot talks to a local fake server. Codex can then:
+> **`tgmock`** is a local fake Telegram Bot API + bot runtime session manager + Codex MCP tool server + pytest plugin.
 
-- send messages to the bot
-- press inline buttons
-- read the bot's replies
-- inspect logs
-- verify side effects through structured events
+---
 
-In most Python projects this works with little or no bot code changes, because `tgmock` can automatically redirect `aiohttp` and `httpx` traffic to the local mock server.
+## Why tgmock
 
-## How it works
+`tgmock` is built for **Codex-driven Telegram bot test automation**.
+Instead of checking isolated handlers, you can ask Codex to run realistic user flows end-to-end through a local Bot API mock.
 
-The flow is simple:
+**Now you can ask Codex to test real bot scenarios from the user’s point of view.**
 
-1. You tell `tgmock` how to start your bot.
-2. `tgmock` starts a fake Telegram API on your machine.
-3. Your bot connects to that fake API instead of real Telegram.
-4. Codex uses `tg_*` tools like `tg_send`, `tg_send_photo`, and `tg_tap` to simulate users.
-5. You inspect the responses and logs until the flow is correct.
+With `tgmock`, Codex (or `pytest`) can:
+
+- send text and photo updates,
+- press inline buttons,
+- inspect bot responses and logs,
+- collect custom events.
+
+## What’s included
+
+- **Fake Telegram API server** (`TelegramMockServer`).
+- **Session runtime** (`TgmockSession`) that runs the mock server + your bot subprocess.
+- **MCP server** with tools like `tg_start`, `tg_send`, `tg_tap`, `tg_snapshot`, `tg_logs`, `tg_stop`.
+- **Pytest plugin** with fixtures: `tg_runtime`, `tg_server`, `tg_bot`, `tg_client`, `tg_client_factory`.
+- **CLI**:
+  - `tgmock serve` — run the mock server only,
+  - `tgmock mcp` — run the MCP server.
+
+## Auto-detection support
+
+`tgmock` can auto-detect bot startup commands for:
+
+- **Python** (e.g. `bot.py`, `main.py`, package `__main__`),
+- **Node.js** (`package.json` scripts `start`/`dev`, `main`, common entry files),
+- **Go** (`main.go`, `cmd/*/main.go`, with pre-start build command).
+
+If detection is wrong, set the command explicitly.
+
+---
 
 ## Quick start
 
-If you are new to the project, start with this section and ignore the rest for now.
-
-### First understand the two repositories
-
-During setup you usually work in **two different places**:
-
-#### Repository 1: `tgmock`
-
-This repository contains the tool itself:
-
-- the fake Telegram API server
-- the MCP server for Codex
-- the skills and plugin manifest
-- the pytest plugin
-
-In this repository you usually do things like:
-
-- install `tgmock`
-- connect `tgmock` to Codex
-- improve or debug `tgmock` itself
-
-#### Repository 2: your bot project
-
-This is the repository of the Telegram bot you want to test.
-
-In the bot project you usually do things like:
-
-- let `tgmock` auto-detect how to start the bot
-- optionally wire `BOT_API_BASE` if auto-patch is not enough
-- ask Codex to start tests with `project_root` pointing to that bot project
-
-Short version:
-
-- install and maintain the tool here, in `tgmock`
-- configure and test the actual bot in the bot repository
-
-### 1. In the `tgmock` repository: install tgmock
+### 1) Install
 
 ```bash
 pip install "tgmock[mcp]"
 ```
 
-### 2. In the `tgmock` repository: connect tgmock to Codex
+### 2) Connect to Codex
 
-Preferred: register this checkout as a local Codex plugin:
+**Option A (recommended):** register this repository as a local Codex plugin.
 
 ```bash
 python3 scripts/register_codex_plugin.py
 ```
 
-This script is idempotent. It:
-
-- creates or updates `~/plugins/tgmock` as a symlink to this checkout
-- refreshes the Codex local-plugin cache from this checkout
-- creates or updates `~/.agents/plugins/marketplace.json`
-- preserves any other existing local plugin entries
-
-Fallback: manual MCP registration:
+**Option B:** register MCP manually.
 
 ```bash
 codex mcp add tgmock -- python3 -m tgmock.mcp_server
 ```
 
-This repository also already contains a local Codex plugin manifest:
+### 3) Run a test session in Codex
 
-- `.codex-plugin/plugin.json`
-- `.mcp.json`
-- `skills/`
+Minimal flow:
 
-### 3. In the bot project: usually no tgmock config is needed
+1. `tg_start(project_root="/path/to/your-bot")`
+2. `tg_send(text="/start")`
+3. `tg_snapshot()` / `tg_logs()`
+4. `tg_stop()`
 
-Now switch to the repository of the bot you want to test.
+> `project_root` must point to your **bot repository**, not this `tgmock` repository.
 
-In common projects `tgmock` can now auto-detect the start command:
+---
 
-- Python: common entrypoints like `bot.py`, `main.py`, and package `__main__.py`
-- Node: `package.json` scripts like `start` or `dev`, plus common `bot.js` style files
-- Go: `go.mod` projects with `main.go` or `cmd/*/main.go`
+## How it works (short version)
 
-Readiness is also inferred automatically from the first request your bot makes to the mock Telegram API, so `TGMOCK_READY_LOG` is usually unnecessary.
+1. `tgmock` loads config.
+2. Starts local mock Telegram API (`http://localhost:<port>`).
+3. Starts your bot as a subprocess.
+4. Waits until ready:
+   - by `ready_log`, or
+   - by first bot request to mock API.
+5. MCP/pytest inject updates and assert outputs.
 
-Only add explicit config when auto-detection is wrong or your project needs a custom command:
+---
 
-```env
-TGMOCK_BOT_COMMAND=python main.py
-TGMOCK_READY_LOG=Bot starting
-```
+## Configuration
 
-`TGMOCK_READY_LOG` is now an override, not a required setup step.
+Configuration priority (highest to lowest):
 
-### 4. In Codex: ask it to test the bot project
-
-Typical flow:
-
-1. Ask Codex to inspect the bot project and confirm the detected entrypoint.
-2. Ask it to call `tg_start(project_root="...")`.
-3. Ask it to send `/start` and check the response.
-4. Ask it to stop the session with `tg_stop()`.
+1. `TGMOCK_*` environment variables,
+2. `TGMOCK_*` keys from `.env`,
+3. `[tool.tgmock]` in `pyproject.toml`,
+4. built-in defaults.
 
 Example:
 
-```text
-Use tgmock to test this Telegram bot.
-Project root is /path/to/bot.
-Start the bot, send /start, show me the snapshot, then stop the session.
+```toml
+[tool.tgmock]
+# bot_command = ["python", "main.py"]
+# build_command = ["python", "-m", "compileall", "."]
+# port = 8999
+# token = "test:token"
+# ready_log = "bot starting"
+# startup_timeout = 15
+# default_timeout = 25
+# settle_ms = 400
+# auto_patch = true
+# env_file = ".env"
+
+# [tool.tgmock.env]
+# DATABASE_URL = "postgres://..."
 ```
 
-Important: `project_root` here is the path to the **bot project**, not the path to the `tgmock` repository.
+### Python auto-patch
 
-### 5. If the bot does not start
+For Python commands, `tgmock` can auto-patch HTTP clients so Telegram API calls are redirected to the local mock server. In many projects this works without bot code changes.
 
-First check:
+---
 
-- did `tgmock` detect the right start command?
-- if the project is Node or Go, does the bot read `BOT_API_BASE`?
-- does the bot actually start if you run the command manually?
+## pytest example
 
-Then use:
+```python
+import pytest
 
-- `tg_logs()` to read stdout/stderr
-- `tg_restart()` after config changes
+@pytest.mark.tgmock
+async def test_start_flow(tg_client):
+    resp = await tg_client.send("/start")
+    assert "start" in resp.text.lower()
+```
 
-### Minimal mental model
+Useful client methods:
 
-- `tgmock` repository: install the tool and expose its MCP server to Codex
-- bot repository: usually let `tgmock` detect how to start the bot
-- Codex session: run `tg_start(project_root="path-to-bot-repo")` and test the flow
+- `send(text)`
+- `send_photo(...)`
+- `tap(label_or_data, prev=None)`
+- `responses()`
+- `events(type=None)`
+- `reset()`
 
-## For most Python bots
+---
 
-If the bot uses `aiohttp` or `httpx`, `tgmock` usually works without changing bot code. Start with zero config first. Only read the manual wiring section later if auto-patch is not enough.
+## Core MCP tools
+
+- `tg_start` — start mock server + bot process,
+- `tg_send` / `tg_send_photo` — inject updates,
+- `tg_tap` — click inline keyboard buttons,
+- `tg_snapshot` — conversation snapshot,
+- `tg_events` — custom emitted events,
+- `tg_logs` — bot log tail,
+- `tg_restart` — restart bot process,
+- `tg_stop` — stop current session.
+
+---
+
+## CLI
+
+```bash
+# run only mock Telegram Bot API
+tgmock serve --port 8999 --token test:token
+
+# run MCP server
+tgmock mcp
+```
+
+---
+
+## Troubleshooting
+
+- If the bot fails to start, check `tg_logs` first.
+- For Node/Go bots, ensure your bot supports custom `BOT_API_BASE`.
+- If auto-detection fails, set `TGMOCK_BOT_COMMAND` or `[tool.tgmock].bot_command` explicitly.
+
+---
 
 ## Repository layout
 
-This repository is now Codex-first:
-
-- local Codex plugin manifest in [`.codex-plugin/plugin.json`](./.codex-plugin/plugin.json)
-- MCP server config in [`.mcp.json`](./.mcp.json)
-- Codex-native skills in [`skills/`](./skills/)
-- no legacy assistant-specific files, commands, or docs
-
-## Install and connection details
-
-### Python package
-
-```bash
-pip install "tgmock[mcp]"
-```
-
-### Codex local plugin
-
-This repository already contains the files a local Codex plugin needs:
-
-- `.codex-plugin/plugin.json`
-- `.mcp.json`
-- `skills/`
-
-To register this checkout for yourself:
-
-```bash
-python3 scripts/register_codex_plugin.py
-```
-
-Run it from the `tgmock` repository checkout. The script will:
-
-- create or update `~/plugins/tgmock` as a symlink to your checkout
-- create or update `~/.agents/plugins/marketplace.json`
-- upsert the `tgmock` marketplace entry without removing other plugins
-
-If `tgmock` does not appear immediately in Codex after registration, restart Codex and reload the local plugin list.
-
-If you prefer to wire it manually, create the symlink yourself:
-
-```bash
-mkdir -p ~/plugins
-ln -sfn /absolute/path/to/tgmock ~/plugins/tgmock
-```
-
-Then add this entry to `~/.agents/plugins/marketplace.json`:
-
-```json
-{
-  "name": "tgmock",
-  "source": {
-    "source": "local",
-    "path": "./plugins/tgmock"
-  },
-  "policy": {
-    "installation": "AVAILABLE",
-    "authentication": "ON_INSTALL"
-  },
-  "category": "Developer Tools"
-}
-```
-
-If the marketplace file does not exist yet, create it with a `plugins` array and include the entry above.
-
-### Fallback: manual MCP registration
-
-```bash
-codex mcp add tgmock -- python3 -m tgmock.mcp_server
-```
-
-## Detailed behavior
-
-`tgmock` starts a local HTTP server that mimics the Telegram Bot API. Your bot talks to that server instead of the real Telegram API. Tests and Codex tools can then:
-
-- send user messages
-- tap inline keyboard buttons
-- inspect rendered conversation snapshots
-- read bot logs
-- collect structured side-effect events
-
-For Python bots, `tgmock` can auto-patch `aiohttp` and `httpx` so the bot is redirected to the mock server without code changes.
-
-## Project configuration
-
-Configuration is optional. Start with zero config and add overrides only if auto-detection is wrong or the project needs custom build/start behavior.
-
-### `.env`
-
-```env
-TGMOCK_BOT_COMMAND=python main.py
-TGMOCK_READY_LOG=Bot starting
-```
-
-Optional:
-
-```env
-TGMOCK_BUILD_COMMAND=python -m compileall .
-TGMOCK_PORT=8999
-TGMOCK_STARTUP_TIMEOUT=20
-TGMOCK_AUTO_PATCH=true
-```
-
-### `pyproject.toml`
-
-```toml
-[tool.tgmock]
-bot_command = ["python", "main.py"]
-ready_log = "Bot starting"
-port = 8999
-startup_timeout = 20
-default_timeout = 25
-settle_ms = 400
-auto_patch = true
-```
-
-Commands can be configured either as:
-
-- strings, parsed with `shlex.split`
-- arrays, used as exact argv
-
-`tgmock` does **not** invoke a shell implicitly. If you really need shell syntax, pass it explicitly, for example:
-
-```toml
-build_command = ["bash", "-lc", "go build -o /tmp/mybot ./cmd/server"]
-```
-
-Config priority stays the same:
-
-1. `TGMOCK_*` process environment variables
-2. `TGMOCK_*` values from the project `.env`
-3. `[tool.tgmock]` in `pyproject.toml`
-4. auto-detected project defaults
-
-## Auto-patch vs manual wiring
-
-### Auto-patch
-
-Enabled by default for Python bots whose start command resolves to Python. `tgmock` injects a temporary `sitecustomize.py` and redirects requests from `api.telegram.org` to the mock server.
-
-Supported clients:
-
-- `aiohttp`
-- `httpx`
-
-Disable it with:
-
-```env
-TGMOCK_AUTO_PATCH=false
-```
-
-### Manual wiring
-
-For non-Python bots, or when auto-patch is disabled, wire `BOT_API_BASE` into the bot yourself. This is the main extra step for Node and Go bots: start command detection is automatic, API redirection is not.
-
-**aiogram 3.x**
-
-```python
-import os
-from aiogram.client.session.aiohttp import AiohttpSession
-from aiogram.client.telegram import TelegramAPIServer
-
-api_base = os.environ.get("BOT_API_BASE")
-if api_base:
-    session = AiohttpSession(api=TelegramAPIServer.from_base(api_base))
-    bot = Bot(token=config.bot_token, session=session)
-else:
-    bot = Bot(token=config.bot_token)
-```
-
-**python-telegram-bot**
-
-```python
-base_url = os.environ.get("BOT_API_BASE", "https://api.telegram.org/bot")
-app = Application.builder().token(TOKEN).base_url(base_url).build()
-```
-
-**Telegraf**
-
-```js
-const bot = new Telegraf(token, {
-  telegram: { apiRoot: process.env.BOT_API_BASE || "https://api.telegram.org" }
-})
-```
-
-**go-telegram-bot-api**
-
-```go
-bot, _ := tgbotapi.NewBotAPIWithAPIEndpoint(token, os.Getenv("BOT_API_BASE")+"/bot%s/%s")
-```
-
-## Codex MCP tools
-
-The MCP server exposes these tools:
-
-| Tool | Purpose |
-| --- | --- |
-| `tg_start` | Start the fake Telegram API and the bot subprocess |
-| `tg_send` | Send a text message as a test user |
-| `tg_tap` | Tap an inline keyboard button by label |
-| `tg_snapshot` | Read the current conversation snapshot |
-| `tg_events` | Read structured side-effect events |
-| `tg_logs` | Read the latest bot stdout/stderr lines |
-| `tg_users` | List active mock users |
-| `tg_reset` | Reset one user's responses, events, and bot-side state |
-| `tg_restart` | Restart only the bot process |
-| `tg_stop` | Stop the bot and mock server |
-
-`tg_start` and `tg_restart` accept `project_root`, so Codex does not have to rely on the MCP server's current working directory.
-
-## Typical Codex flow
-
-1. Inspect the target project and confirm the bot entrypoint if auto-detection might be ambiguous.
-   If config is absent, `tgmock` will auto-detect the entrypoint and wait for the first bot request to the mock API.
-2. Call `tg_start(project_root=...)`.
-3. Exercise the bot with `tg_send`, `tg_tap`, `tg_snapshot`, `tg_events`, and `tg_logs`.
-4. Call `tg_stop()` when done.
-
-## pytest usage
-
-The pytest plugin is still auto-registered via `pytest11`.
-
-```python
-async def test_start(tg_client):
-    response = await tg_client.send("/start")
-    assert "Welcome" in response.text
-```
-
-Available fixtures:
-
-- `tg_runtime`
-- `tg_server`
-- `tg_bot`
-- `tg_client`
-- `tg_client_factory`
-
-## Structured events
-
-Bots can post structured test events instead of forcing assertions through UI text.
-
-```python
-import aiohttp
-import os
-
-async def post_event(event_type: str, data: dict):
-    base = os.environ.get("BOT_API_BASE", "")
-    if not base:
-        return
-    async with aiohttp.ClientSession() as session:
-        await session.post(
-            f"{base}/test/event",
-            json={"user_id": 111, "type": event_type, "data": data},
-        )
-```
-
-Then inspect them with `tg_events(type="tool_call")` or `client.events(type="tool_call")`.
-
-## Debugging
-
-- If the bot exits before readiness, `tg_start` returns the last captured log lines.
-- Use `tg_logs()` to inspect stdout/stderr at any point.
-- Use `tg_restart()` after code or env changes.
-- Use `tg_reset(user_id=...)` to clear one test user's state without stopping the whole session.
+- `tgmock/` — runtime, server, MCP, pytest plugin, client.
+- `scripts/register_codex_plugin.py` — local Codex plugin registration.
+- `skills/` — Codex skill files.
+- `tests/` — project test suite.
+
+---
 
 ## License
 
-MIT
+MIT.
